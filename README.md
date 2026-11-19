@@ -1,2 +1,41 @@
-# kinetica-plugins
-Plugins for Kinetica-editor
+# Kinetica Plugins
+
+Плагины для [Kinetica Editor](https://github.com/Kinetica-Labs/kinetica-editor) — редактора робототехники.
+Каждая папка с `plugin.py` — один плагин на Python: функция с `@command` становится кнопкой в меню
+«Плагины», строкой консоли, операцией API и инструментом MCP для ИИ-агента; `@component` вешается на объект
+сцены и работает каждый кадр; `ui.panel(...)` — своя вкладка в окне. Только стандартная библиотека Python 3.
+
+| Плагин | Что делает |
+|---|---|
+| [cubes](cubes/plugin.py) | «Ряд кубиков» перед роботом — есть что взять схватом |
+
+## Подключить
+
+Один раз: в редакторе **Плагины → Добавить папку плагинов…** — и выбрать эту папку (корень репозитория).
+Редактор запомнит её и будет запускать плагины отсюда при каждом старте; сохранили `plugin.py` — плагин
+перезапустился (~0,2 с).
+
+Без окна, для скрипта или CI: `KE_PLUGINS=/путь/к/kinetica-plugins kinetica`.
+
+## Написать свой
+
+Руководство «плагин за пять минут» — `docs/plugins.md` в репозитории редактора; контракт — его
+`docs/contracts/editor-plugin.md`. Коротко:
+
+```python
+from kinetica.plugin import command, field, run
+
+
+@command(label="Ряд кубиков", key="Ctrl+Shift+R")
+def row(scene, count: int = field(5, range=(1, 30), label="Сколько")):
+    """Ряд кубиков перед роботом."""
+    ...
+    return {"made": count}
+
+
+run()
+```
+
+Новый плагин — новая папка с `plugin.py`. Имя папки — имя плагина и приставка его команд (`cubes_row`).
+
+Лицензия — MIT.
