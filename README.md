@@ -31,12 +31,13 @@
 from kinetica.plugin import command, field
 
 
-@command(label="Ряд кубиков", key="Ctrl+Shift+R")
-def row(scene, count: int = field(5, range=(1, 30), label="Сколько")):
-    """Ряд кубиков перед роботом."""
-    for k in range(count):
-        scene.add("box", size=(0.05, 0.05, 0.05), position=(0.45, 0.025, k * 0.12), role="rigid")
-    return {"made": count}
+@command(label="Поднять выделенное", key="Ctrl+Shift+U")
+def lift(scene, height: float = field(0.1, unit="м", range=(-1.0, 1.0), label="На сколько")):
+    """Поднять выделенные объекты - одна правка, сколько бы их ни было."""
+    chosen = scene.editor.selection
+    if chosen:
+        scene.move(*chosen, by=(0, height, 0))
+    return {"moved": len(chosen)}
 ```
 
 `scene` — объектная модель редактора, та же, что в его консоли: `scene.add(...)`, `scene.objects["Куб 1"]`,
