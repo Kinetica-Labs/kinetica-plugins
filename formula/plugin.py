@@ -19,6 +19,8 @@ from kinetica.plugin import command, component, draw, field, on_change, show, ui
 
 _LATEX = field("F = ma", label="LaTeX", help="Формула, как между $ и $: T = 2\\pi\\sqrt{\\frac{L}{g}}")
 _COLOUR = dict(range=(0.0, 1.0), label="Цвет: красный, зелёный, синий")
+_EDGE = field(True, label="Обводка", help="Тёмный контур вокруг знаков: формула читается на любом фоне")
+EDGE = {"stroke": (0.02, 0.03, 0.05), "stroke_width": 0.06}  # a dark edge, six hundredths of an em
 
 
 @component(label="Формула над объектом")
@@ -28,6 +30,7 @@ class Label:
     size = field(5.0, unit="% вида", range=(0.5, 50.0), label="Размер", help="Высота буквы в долях высоты вида")
     offset = field((0.0, 0.35, 0.0), unit="м", label="Сдвиг от фигуры", help="По осям мира: формула остаётся над телом, как бы оно ни кувыркалось")
     colour = field((1.0, 0.86, 0.3), **_COLOUR)
+    outline = _EDGE
 
 
 @component(label="Формула в мире")
@@ -38,6 +41,7 @@ class World:
     offset = field((0.0, 0.5, 0.0), unit="м", label="Сдвиг на фигуре", help="В осях фигуры")
     turn = field((0.0, 0.0, 0.0), unit="°", label="Поворот на фигуре")
     colour = field((0.72, 0.62, 0.97), **_COLOUR)
+    outline = _EDGE
 
 
 @component(label="Титр")
@@ -48,6 +52,7 @@ class Screen:
     left = field(50.0, unit="%", range=(0.0, 100.0), label="Слева")
     top = field(12.0, unit="%", range=(0.0, 100.0), label="Сверху")
     colour = field((0.96, 0.96, 0.98), **_COLOUR)
+    outline = _EDGE
 
 
 class Problem(Exception):
@@ -184,12 +189,13 @@ def redraw(scene):
                 problems.append(f"«{v['latex']}» — {problem}")
                 continue
             key = f"{kind.__name__.lower()}/{id}"
+            edge = EDGE if v["outline"] else {}
             if kind is Label:
-                draw.fill(key, outlines, object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"])
+                draw.fill(key, outlines, object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"], **edge)
             elif kind is World:
-                draw.fill(key, outlines, object=id, at=v["offset"], turn=v["turn"], scale=v["size"], colour=v["colour"])
+                draw.fill(key, outlines, object=id, at=v["offset"], turn=v["turn"], scale=v["size"], colour=v["colour"], **edge)
             else:
-                draw.fill(key, outlines, object=id, space="screen", place=(v["left"] / 100, v["top"] / 100), scale=v["size"] / 100, colour=v["colour"])
+                draw.fill(key, outlines, object=id, space="screen", place=(v["left"] / 100, v["top"] / 100), scale=v["size"] / 100, colour=v["colour"], **edge)
             keys.add(key)
     for gone in _drawn - keys:
         draw.clear(gone)
@@ -217,6 +223,12 @@ def _put(scene, kind, latex):
     scene.editor.select(*shapes)
     typeset(latex)  # a source LaTeX refuses is said now, with the command's answer
     return {"ids": [shape.id for shape in shapes]}
+
+
+@command(label="Контуры формулы")
+def outlines(scene, latex: str = _LATEX):
+    """Контуры формулы для draw.fill - другому плагину или агенту, который рисует её сам: строки «M x y L x y C … Z» в эм."""
+    return {"outlines": typeset(latex)}
 
 
 @command(label="Над объектом")
