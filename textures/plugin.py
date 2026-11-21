@@ -3,8 +3,11 @@
 Six patterns - wood, brick, tiles, concrete, marble, brushed metal - made from a few numbers: how coarse, which variant,
 two colours of your own if you want them. «Применить» makes a seamless picture (a PNG in ~/Kinetica/textures, named by
 what it was made from: the same numbers give the same file) with its relief beside it, and puts it on every selected
-shape as an ordinary image texture - with its repeats a metre and its relief, one undo step. The scene keeps only the
-file's path: nothing of this plugin is needed to open it. «Образцы» puts a cube of each pattern into the scene.
+shape as an ordinary image texture - with its repeats a metre and its relief, one undo step. The relief goes as a height
+map (bump mapping: the editor works the slopes out, and its height and the repeats can be changed afterwards) or as a
+normal map (the slopes themselves, baked for this height and these repeats - what ready texture sets bring). The scene
+keeps only the files' paths: nothing of this plugin is needed to open it. «Образцы» puts a cube of each pattern into
+the scene.
 
 Only Python's standard library: the noise is a lattice of random numbers smoothly blended, summed over octaves, and
 every pattern repeats at the picture's edges.
@@ -106,11 +109,30 @@ def _field(kind, grain, rng):
     return mark, height
 
 
-def _png(path, grey, colours=None):
+def _slopes(height, steep):
+    """The field's slopes as a normal map's three channels, each SIZE x SIZE levels: red - the normal's lean to the
+    right, green - up (OpenGL's way), blue - out of the surface. `steep`: the rise of the whole field's height over one
+    pixel's width."""
+    red, green, blue = bytearray(), bytearray(), bytearray()
+    for y in range(SIZE):
+        above, row, below = height[y - 1], height[y], height[(y + 1) % SIZE]
+        for x in range(SIZE):
+            nx, ny = -steep * (row[(x + 1) % SIZE] - row[x - 1]) / 2, -steep * (above[x] - below[x]) / 2
+            long = math.sqrt(nx * nx + ny * ny + 1)
+            red.append(int((nx / long + 1) * 127.5 + 0.5)), green.append(int((ny / long + 1) * 127.5 + 0.5)), blue.append(int((1 / long + 1) * 127.5 + 0.5))
+    return bytes(red), bytes(green), bytes(blue)
+
+
+def _png(path, grey, colours=None, channels=None):
     """A SIZE x SIZE picture written as a PNG: the field `grey` (rows of 0 to 1) as it is, or coloured from the first of
-    `colours` at 0 to the second at 1."""
-    levels = bytes(min(255, max(0, int(v * 255 + 0.5))) for row in grey for v in row)
-    if colours:
+    `colours` at 0 to the second at 1; or three `channels` of levels as they are."""
+    levels = b"" if channels else bytes(min(255, max(0, int(v * 255 + 0.5))) for row in grey for v in row)
+    if channels:
+        pixels = bytearray(3 * SIZE * SIZE)
+        for channel in range(3):
+            pixels[channel::3] = channels[channel]
+        colours = True
+    elif colours:
         a, b = colours
         pixels = bytearray(3 * len(levels))
         for channel in range(3):  # a table from the level to this channel: one pass in C, not one a pixel here
@@ -126,24 +148,33 @@ def _png(path, grey, colours=None):
                   + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
 
 
-def make(kind, grain=1.0, variant=0, colours=None, folder=None):
-    """The pattern's picture and its relief as two PNG files, made once for the same words: their paths."""
+def make(kind, grain=1.0, variant=0, colours=None, folder=None, steep=0.0):
+    """The pattern's picture, its relief as a height map and - with `steep` above 0, the rise of the whole height over
+    one pixel's width - as a normal map: PNG files made once for the same words. Their paths; the normal map's is "" when
+    none was asked for."""
     name, base, mark = KINDS[kind]
     colours = colours or (base, mark)
     folder = folder or os.path.join(os.path.expanduser("~"), "Kinetica", "textures")
     words = repr((name, round(float(grain), 3), int(variant), [[round(float(c), 3) for c in colour] for colour in colours], SIZE))
     stem = os.path.join(folder, f"{name}-{hashlib.sha1(words.encode()).hexdigest()[:10]}")
-    if not (os.path.exists(stem + ".png") and os.path.exists(stem + "-relief.png")):
+    normals = f"{stem}-normal-{steep:.3f}.png" if steep > 0 else ""
+    if not all(os.path.exists(file) for file in (stem + ".png", stem + "-relief.png", normals) if file):
         os.makedirs(folder, exist_ok=True)
         amount, height = _field(name, max(0.25, min(4.0, float(grain))), random.Random(f"{name}/{int(variant)}"))
         _png(stem + "-relief.png", height)
         _png(stem + ".png", amount, colours)
-    return stem + ".png", stem + "-relief.png"
+        if normals:
+            _png(normals, None, channels=_slopes(height, steep))
+    return stem + ".png", stem + "-relief.png", normals
 
 
-def _put(scene, shape, kind, grain, variant, colours, repeats, relief):
-    picture, heights = make(kind, grain, variant, colours)
-    for key, values in (("kind", ["image"]), ("repeats", [float(repeats)]), ("file", [picture]), ("bump", [float(relief) / 1000]), ("height_file", [heights])):
+def _put(scene, shape, kind, grain, variant, colours, repeats, relief, maps="высоты"):
+    """The picture on the shape with its relief: as a height map (bump), or baked into a normal map for this height
+    and these repeats - a pixel is 1 / (repeats * SIZE) metres wide."""
+    baked = maps == "нормали" and relief > 0
+    picture, heights, normals = make(kind, grain, variant, colours, steep=float(relief) / 1000 * float(repeats) * SIZE if baked else 0.0)
+    for key, values in (("kind", ["image"]), ("repeats", [float(repeats)]), ("file", [picture]), ("bump", [0.0 if baked else float(relief) / 1000]),
+                        ("height_file", ["" if baked else heights]), ("normal_file", [normals])):
         scene.ed.scene_set(id=shape.id, line="texture", key=key, values=values)
     return picture
 
@@ -153,11 +184,13 @@ _GRAIN = field(1.0, range=(0.25, 4.0), label="Крупность", help="1 - к�
 _VARIANT = field(0, range=(0, 999), label="Вариант", help="Другое число - тот же рисунок с другими случайностями")
 _REPEATS = field(1.0, unit="на м", range=(0.05, 100.0), label="Повторений")
 _RELIEF = field(2.0, unit="мм", range=(0.0, 20.0), label="Рельеф", help="Насколько выпуклым рисунок выглядит на свету; 0 - гладко")
+_MAPS = field("высоты", choices=["высоты", "нормали"], label="Рельеф картой",
+              help="высоты - карта высот (bump): высоту и повторения потом можно менять; нормали - карта нормалей (normal map), как в готовых наборах")
 
 
 @command(label="Текстура на выделенное")
 def apply(scene, kind: str = _KIND, grain: float = _GRAIN, variant: int = _VARIANT, repeats: float = _REPEATS, relief: float = _RELIEF,
-          own: bool = field(False, label="Свои цвета"), base=field((0.7, 0.7, 0.7), range=(0.0, 1.0), label="Цвет основы"),
+          maps: str = _MAPS, own: bool = field(False, label="Свои цвета"), base=field((0.7, 0.7, 0.7), range=(0.0, 1.0), label="Цвет основы"),
           mark=field((0.3, 0.3, 0.3), range=(0.0, 1.0), label="Цвет рисунка")):
     """Рисунок, сделанный из этих чисел, на каждую выделенную фигуру: бесшовная картинка и её рельеф, один шаг отмены."""
     shapes = [o for o in scene.editor.selection if o.kind == "entity"]
@@ -165,7 +198,7 @@ def apply(scene, kind: str = _KIND, grain: float = _GRAIN, variant: int = _VARIA
         raise ValueError("выделите фигуру: текстура ложится на выделенное")
     picture = ""
     for shape in shapes:
-        picture = _put(scene, shape, kind, grain, variant, (tuple(base), tuple(mark)) if own else None, repeats, relief)
+        picture = _put(scene, shape, kind, grain, variant, (tuple(base), tuple(mark)) if own else None, repeats, relief, maps)
     show(state=f"{kind}: {os.path.basename(picture)} на {len(shapes)} фиг.")
     return {"file": picture, "ids": [shape.id for shape in shapes]}
 
@@ -187,7 +220,8 @@ ui.panel("Текстуры", ui.section("Рисунок", ui.choice("kind", list
                                 ui.slider("variant", 0, range=(0, 999), label="Вариант"),
                                 ui.number("grain", 1.0, label="Крупность", range=(0.25, 4.0), step=0.25),
                                 ui.number("repeats", 1.0, label="Повторений", unit="на м", range=(0.05, 100.0)),
-                                ui.number("relief", 2.0, label="Рельеф", unit="мм", range=(0.0, 20.0))),
+                                ui.number("relief", 2.0, label="Рельеф", unit="мм", range=(0.0, 20.0)),
+                                ui.choice("maps", ["высоты", "нормали"], "высоты", label="Рельеф картой")),
          ui.section("Цвета", ui.toggle("own", False, label="Свои цвета"), ui.vector("base", (0.7, 0.7, 0.7), label="Основа"),
                     ui.vector("mark", (0.3, 0.3, 0.3), label="Рисунок")),
          ui.row(ui.button(apply, "Применить к выделенному"), ui.button(samples, "Образцы")),
