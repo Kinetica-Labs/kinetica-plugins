@@ -14,13 +14,15 @@ place, the random numbers are drawn in one thread.
 """
 import argparse
 import atexit
+import json
 import multiprocessing
 import os
 import sys
+import tempfile
 from concurrent.futures import ProcessPoolExecutor
 
 import drive
-from network import Net, hidden_of, new_rng, stored, weights_of, weights_text
+from network import Net, brain_file, hidden_of, new_rng, stored, weights_of, weights_text
 from robot import Wiring, _lines, _value, read_world
 
 
@@ -441,15 +443,38 @@ def main():
                                 ("elite", int, 2), ("workers", int, 0), ("seed", int, 1)):
         p.add_argument("--" + name, type=kind, default=default)
     p.add_argument("--seconds", type=float, help="a run's length (default: the brain's)")
+    p.add_argument("--longest", type=float, default=600.0, help="the longest a run grows to, s")
     p.add_argument("--judge", choices=sorted(JUDGES), help="what scores a run (default: the brain's)")
     p.add_argument("--cars", type=int, default=0, help="robots a world, side by side (0: 20 for one body, 1 for joined bodies)")
+    p.add_argument("--tracks", type=int, default=0, help="random tracks the race's car drives too (its score its worst)")
+    p.add_argument("--out", help="a *.brain.json written after every generation: its best, to load in the editor")
     p.add_argument("--save", help="a copy of the scene with the best weights in its brain")
     a = p.parse_args()
-    with _probe_scene(os.path.abspath(a.scene)) as scene:
+    scene_file = os.path.abspath(a.scene)
+    with _probe_scene(scene_file) as scene:
         body, brain = brain_of(scene, a.body)
-        report = lambda g, best, mean, clean: print(f"generation {g + 1}: best {best:.3f}, mean {mean:.3f}, clean {clean:.0%}", flush=True)
-        weights, score, _ = train(os.path.abspath(a.scene), body, brain, a.population, a.generations, a.seconds or float(brain["seconds"]),
-                                  a.mutation, a.elite, a.workers, a.seed, a.judge or brain["judge"], report, cars=a.cars)
+        wiring = Wiring(scene, body, drive=brain.get("drive", "thrusts"))
+        net = Net(wiring.size, hidden_of(brain["layers"]), wiring.count, brain["activation"], brain["recurrent"], brain.get("echo", False))
+        card = {k: v for k, v in brain.items() if k not in ("weights", "score")}
+        said, scores = wiring.said(), []
+
+        def report(g, best, mean, clean):
+            scores.append(best)
+            print(f"generation {g + 1}: best {best:.3f}, mean {mean:.3f}, clean {clean:.0%}", flush=True)
+
+        def keep(g, ranked):  # the generation's best in its file - written whole, then put in place
+            if a.out:
+                trained = {"generation": g + 1, "score": scores[-1], "population": a.population, "seed": a.seed, "tracks": a.tracks}
+                with open(a.out + ".part", "w", encoding="utf-8") as f:
+                    json.dump(brain_file(net, ranked[0], card, said, trained), f, ensure_ascii=False)
+                os.replace(a.out + ".part", a.out)
+
+        with tempfile.TemporaryDirectory() as folder:
+            courses = globals()["courses"](brain, a.tracks, a.seed, folder) if a.tracks else ()
+            weights, score, _ = train(scene_file, body, brain, a.population, a.generations, a.seconds or float(brain["seconds"]),
+                                      a.mutation, a.elite, a.workers, a.seed, a.judge or brain["judge"], report, cars=a.cars,
+                                      first=weights_of(brain.get("weights", "")), longest=a.longest, keep=keep, tracks=courses,
+                                      report_horizon=lambda h: print(f"  the best lasted the whole run: runs of {h:.0f} s now", flush=True))
         print(f"best {score:.3f}, {len(weights)} weights")
         if a.save:
             scene.ed.component_set(id=body, type="brain.net", values={**brain, "weights": weights_text(weights), "score": round(score, 4)})
