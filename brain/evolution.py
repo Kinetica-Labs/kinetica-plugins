@@ -15,13 +15,9 @@ place, the random numbers are drawn in one thread.
 import argparse
 import atexit
 import json
-import multiprocessing
 import os
 import sys
 import tempfile
-import threading
-import time
-from concurrent.futures import ProcessPoolExecutor
 
 import drive
 from network import Net, brain_file, hidden_of, new_rng, stored, weights_of, weights_text
@@ -153,6 +149,19 @@ JUDGES = {"upright": Upright, "track": Track}
 TAG = "brain"  # the robots a world trains side by side: each touches the world, not the others
 
 
+def flock(scene, body, n):
+    """The body and n - 1 copies of it where it stands, each touching the world and not the others (tagged and ignoring
+    the tag), each hearing the noise the original does (a sensor's seed of 0 - its own each run - made its id): the
+    bodies. The same in the editor's window (the parade) and in a world with no window (Arena)."""
+    ed = scene.ed
+    ed.scene_tag(ids=[body], tag=TAG, on=True)  # on: a scene tagged before keeps it (no `on` switches it off)
+    ed.scene_set(id=body, line="ignores", values=[TAG])
+    for id, _, kind, _ in Wiring(scene, body).inputs:
+        if kind in ("imu", "sonar", "wrench", "lidar") and not int(_value(_lines(scene, id), kind, "seed", 0) or 0):
+            ed.scene_set(id=id, line=kind, key="seed", values=[id])
+    return [body] + [ed.scene_duplicate(ids=[body], by=[0, 0, 0])["ids"][0] for _ in range(n - 1)]
+
+
 class Arena:
     """One world with no window, `cars` robots in it side by side - copies of the scene's one, each touching the
     world and not the others (tagged and ignoring the tag), each sensing only what its body touches. A copy of a
@@ -167,23 +176,9 @@ class Arena:
         if cars > 1:
             if Wiring(self.scene, body).joints:
                 raise ValueError("a robot of joined bodies trains one a world: «cars» 1")
-            ed.scene_tag(ids=[body], tag=TAG, on=True)  # on: a scene tagged before keeps it (no `on` switches it off)
-            ed.scene_set(id=body, line="ignores", values=[TAG])
-            for id, _, kind, _ in Wiring(self.scene, body).inputs:  # every copy hears the noise the editor's one does:
-                seed = int(_value(_lines(self.scene, id), kind, "seed", 0) or 0)  # its seed, or its own id, as a seed of 0 means
-                if kind in ("imu", "sonar", "wrench", "lidar") and not seed:
-                    ed.scene_set(id=id, line=kind, key="seed", values=[id])
-            y = self._height(body)
-            for _ in range(cars - 1):
-                copy = ed.scene_duplicate(ids=[body])["ids"][0]
-                ed.scene_move(ids=[copy], by=[0, y - self._height(copy), 0])  # where the original stands
-                bodies.append(copy)
+            bodies = flock(self.scene, int(body), cars)
         world = read_world(self.scene)
         self.wirings = [Wiring(self.scene, b, world, mode) for b in bodies]
-
-    def _height(self, id):
-        shape = next(w for w in self.scene.ed.scene_get(id=id)["lines"] if w and w[0] == "shape")
-        return float(shape[shape.index("position") + 2])
 
     def episodes(self, nets, genomes, seconds, brain, goal=None):
         """Each robot run with its weights for `seconds`, all at once: the judges' scores. Built anew, then from the
@@ -323,8 +318,9 @@ def train(scene_file, body, brain, population=100, generations=30, seconds=10.0,
     courses = [(scene_file, body)] + list(tracks)
     horizon = [float(seconds)]
     os.environ.setdefault("KE_PHYSICS_THREADS", "1")  # a world a core: no worker threads of its own
-    # spawned, not forked: the editor's plugin has threads of its own, a fork would copy them half-way
-    with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"), initializer=_worker) as pool:
+    _kinetica()
+    from kinetica.plugin import process_pool  # its workers end with this process: the plugin stopped, the editor closed
+    with process_pool(workers, initializer=_worker) as pool:
         for g in range(int(generations)):
             jobs = [(courses, judge, cars, mode, shape, brain, genomes[w * cars:(w + 1) * cars], horizon[0])
                     for w in range((population + cars - 1) // cars)]
@@ -361,17 +357,9 @@ _arenas = {}  # in a worker process: its worlds, by (scene, body, judge, robots,
 
 
 def _worker():
-    """A worker process's start: its worlds closed when it ends, and it ends when the training's process does - the
-    plugin stopped or restarted, the editor closed - instead of driving on for no one."""
+    """A worker process's start: its worlds closed when the pool ends it (ended with the training's process instead,
+    its worlds' kinetica-core processes end too: their pipes close)."""
     atexit.register(lambda: [a.close() for a in _arenas.values()])
-    parent = os.getppid()
-
-    def orphaned():
-        while os.getppid() == parent:
-            time.sleep(1.0)
-        os._exit(0)  # its worlds' kinetica-core processes end too: their pipes close
-
-    threading.Thread(target=orphaned, name="brain-orphan", daemon=True).start()
 
 
 def _world(job):

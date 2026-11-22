@@ -8,12 +8,13 @@ CPU core; random tracks; also by hand: python3 evolution.py scene.kscene --track
 the examples and random tracks.
 
     select a body → «Мозг на тело» → «Обучить» (the charts by generation, each one's best 20 driving here) →
-    «Поставить лучшего» → ▶
+    «Поставить лучшего» → ▶ (a car's velocity an arrow at its nose, its speed at the tip)
 
 The brain reads only its sensors - noise, counts and delays as the devices have them; the judge of the training reads
 the physics' truth to score a run, as a laboratory would, and nothing of it reaches the brain."""
 import colorsys
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -317,19 +318,8 @@ def _colour(hue):
 def _cars(scene, body, brain, n):
     """The body and n - 1 copies of it where it stands, for a flock: each touching the world and not the others, each
     hearing the noise the original does. (cars, their wirings, their nets' shape)."""
-    ed = scene.ed
-    ed.sim_stop()
-    ed.scene_tag(ids=[body], tag=evolution.TAG, on=True)  # on: no `on` switches a tag the scene has off
-    ed.scene_set(id=body, line="ignores", values=[evolution.TAG])
-    for id, _, kind, _ in Wiring(scene, body).inputs:  # every car hears the noise the original does
-        if kind in ("imu", "sonar", "wrench", "lidar"):
-            ed.scene_set(id=id, line=kind, key="seed", values=[id])
-    cars = [body] + [ed.scene_duplicate(ids=[body])["ids"][0] for _ in range(n - 1)]
-    def height(id):
-        words = next(w for w in ed.scene_get(id=id)["lines"] if w and w[0] == "shape")
-        return float(words[words.index("position") + 2])
-    for c in cars[1:]:  # a copy stands above its original: put back where it stands
-        ed.scene_move(ids=[c], by=[0, height(body) - height(c), 0])
+    scene.ed.sim_stop()
+    cars = evolution.flock(scene, body, n)
     world = read_world(scene)
     wirings = [Wiring(scene, c, world, brain.get("drive", "thrusts")) for c in cars]
     return cars, wirings, (wirings[0].size, hidden_of(brain["layers"]), wirings[0].count, brain["activation"], brain["recurrent"], brain["echo"])
@@ -400,6 +390,8 @@ def referee(scene, dt, bodies):
             car = brain[6]
             car.setdefault("moment", drive.inertia(bodies[body]["mass"], brain[0].footprint))
             pushes[str(body)] = {"force": drive.tyres(bodies[body], car["aim"][1])}
+            if brain[4] % 3 == 0:
+                _speed_arrow(f"speed/{body}/", bodies[body], brain[0].footprint, _colour(0.13))
     f = _flock
     if not f.get("cars") or f.get("over") is None or f["over"].is_set():
         return pushes
@@ -425,7 +417,7 @@ def referee(scene, dt, bodies):
     if f["shown"] >= 0.5:
         f["shown"] = 0.0
         if f["alive"]:  # the leader: the farthest along of those still in it, its metres and laps over it
-            lead = max(f["alive"], key=lambda i: f["judges"][i].score())
+            lead = f["lead"] = max(f["alive"], key=lambda i: f["judges"][i].score())
             j = f["judges"][lead]
             p = bodies.get(f["cars"][lead], {}).get("position", [0, 0, 0])
             laps = f" · {j.score() / j.length:.1f} круга" if hasattr(j, "length") else ""
@@ -438,6 +430,10 @@ def referee(scene, dt, bodies):
                 continue
             alive = i in f["alive"]
             draw.points(f"flock/{i}", [[p[0], 0.55, p[2]]], colour=_colour(f["hues"][i]) if alive else (0.3, 0.3, 0.3), size=16 if alive else 9)
+            if alive:
+                _speed_arrow(f"flock/arrow/{i}/", bodies[car], f["wirings"][i].footprint, _colour(f["hues"][i]), words=i == f.get("lead"))
+            else:
+                draw.clear(f"flock/arrow/{i}/")
             mark = f["marks"][i] if alive else "✕"
             if mark:
                 draw.label(f"flock/mark/{i}", [p[0], 0.85, p[2]], mark, colour=_colour(f["hues"][i]) if alive else (0.5, 0.5, 0.5))
@@ -509,6 +505,31 @@ def _steer(wiring, sensors, turn, moment):
 @on_stop
 def end(scene):
     _live.clear()
+    draw.clear("speed/")
+
+
+def _speed_arrow(key, state, size, colour, words=True):
+    """A car's velocity at its nose, for the eye: a flat arrow the way it goes over the ground, 0.25 m a m/s, and its
+    speed in words at the tip - drawings under `key`, a folder ("speed/7/": a clear of it is of its own). The physics'
+    truth, drawn - no brain reads it."""
+    v, p = state.get("velocity", [0.0, 0.0, 0.0]), state["position"]
+    speed = math.hypot(v[0], v[2])
+    if speed < 0.05 or not size:
+        return draw.clear(key)
+    forward, _ = drive.axes(state.get("rotation", [0.0, 0.0, 0.0]))
+    y = p[1] + size[1] / 2 + 0.01  # over the roof: not hidden in the floor or the body
+    nose = [p[0] + forward[0] * size[0] / 2, y, p[2] + forward[2] * size[0] / 2]
+    length = 0.25 * speed
+    head = min(0.15, length / 2)
+    # the picture's x along the arrow, metres; laid on the ground (x -90°), turned about the up to the velocity
+    draw.fill(key + "arrow", [f"M 0 -0.025 L {length - head:.3f} -0.025 L {length - head:.3f} -0.07 L {length:.3f} 0 "
+                              f"L {length - head:.3f} 0.07 L {length - head:.3f} 0.025 L 0 0.025 Z"],
+              at=nose, turn=(-90.0, math.degrees(math.atan2(-v[2], v[0])), 0.0), colour=colour)
+    if words:
+        tip = [nose[0] + v[0] / speed * length, y + 0.08, nose[2] + v[2] / speed * length]
+        draw.label(key + "words", tip, f"{speed:.1f} м/с".replace(".", ","), colour=colour)
+    else:
+        draw.clear(key + "words")
 
 
 ui.panel("Мозг",
