@@ -49,9 +49,9 @@ def _heading(a, b):
     return math.degrees(math.atan2(-(b[1] - a[1]), b[0] - a[0]))
 
 
-def walls(line, width, thickness=0.12, height=0.3):
+def walls(line, width, thickness=0.12, height=0.6):
     """The track's two walls as one model: each a closed band along the line - its face toward the track `width` / 2
-    from the middle, `thickness` thick, `height` high - in triangles counter-clockwise from outside. (vertices, triangles)."""
+    from the middle, `thickness` thick, `height` high (a car hitting a lower one at 13 m/s is thrown over it) - in triangles counter-clockwise from outside. (vertices, triangles)."""
     n, vertices, triangles = len(line), [], []
     for side in (1, -1):
         base = len(vertices)

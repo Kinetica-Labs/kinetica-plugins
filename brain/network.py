@@ -42,6 +42,7 @@ class Net:
     def reset(self):
         """The memory of a recurrent net back to zeros: a run begins."""
         self.memory = [[0.0] * n for n in self.sizes[1:-1]]
+        self.seen = [[0.0] * n for n in self.sizes]
 
     def forward(self, weights, inputs):
         """The outputs for these inputs, by these weights; a recurrent net remembers its hidden values for the next."""
@@ -51,6 +52,7 @@ class Net:
             raise ValueError(f"{len(inputs)} inputs for a net of {self.sizes[0]}")
         act, x, at = ACTIVATIONS[self.activation], [float(v) for v in inputs], 0
         layers = self.layers()
+        self.seen = [x]  # each layer's values of this step, the inputs first: what a picture of the net lights
         for k, (seen, n) in enumerate(layers):
             last = k == len(layers) - 1
             sees = x + (self.memory[k] if self.recurrent and not last else [])
@@ -61,6 +63,7 @@ class Net:
                 at += seen + 1
             if self.recurrent and not last:
                 self.memory[k] = y
+            self.seen.append(y)
             x = y
         return x
 
