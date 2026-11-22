@@ -1,8 +1,9 @@
 """Training a brain by natural selection (plugin.py starts it from the editor's panel; run this file to train with no
 window): a population of weight lists, each played as the robot's brain for some seconds in a world of its own - a
 kinetica-core process, the editor's physics without a window - and scored by a judge; the best kept as they are, the
-rest born of two parents picked by tournament, their genes mixed and some of them nudged. The worlds run side by side,
-one process a CPU core: physics is the cost, the nets are tiny, a graphics card would add nothing.
+rest born of two parents picked by tournament, their genes mixed and some of them nudged. The worlds run side by side
+in worker processes, one a CPU core, each driving its robots' nets, tyres and judges in a Python of its own (threads
+would share one interpreter's lock: a core between them all); the nets are tiny, a graphics card would add nothing.
 
 The judge is the laboratory, not the robot: it reads the physics' truth (sim_measure) to score a run - the brain reads
 only its sensors. One seed, one result, whatever the number of workers: the scores come back by the individual's
@@ -12,10 +13,11 @@ place, the random numbers are drawn in one thread.
                                                            # into a copy of the scene (--save) or printed
 """
 import argparse
+import atexit
+import multiprocessing
 import os
 import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 import drive
 from network import Net, hidden_of, new_rng, stored, weights_of, weights_text
@@ -300,7 +302,6 @@ def train(scene_file, body, brain, population=100, generations=30, seconds=10.0,
     workers = int(workers) or max(1, (os.cpu_count() or 2) - 1)
     population, elite = max(2, int(population)), max(0, int(elite))
     rng = new_rng(seed)
-    local, arenas, lock = threading.local(), [], threading.Lock()
     mode = brain.get("drive", "thrusts")
     with _probe_scene(scene_file) as world:
         probe = Wiring(world, body, drive=mode)
@@ -315,50 +316,62 @@ def train(scene_file, body, brain, population=100, generations=30, seconds=10.0,
         genomes[0] = weights_of(first)
     history, best, best_score = [], genomes[0], float("-inf")
 
-    def world_scores(w):
-        if not hasattr(local, "arenas"):
-            local.arenas = [Arena(file, b, judge, cars, mode) for file, b in [(scene_file, body)] + list(tracks)]
-            local.nets = [Net(*shape) for _ in range(cars)]
-            with lock:
-                arenas.extend(local.arenas)
-        runs = [(a.episodes(local.nets, genomes[w * cars:(w + 1) * cars], horizon[0], brain), a.survived) for a in local.arenas]
-        return [min(s) for s in zip(*(r[0] for r in runs))], [all(s) for s in zip(*(r[1] for r in runs))]
-
+    courses = [(scene_file, body)] + list(tracks)
     horizon = [float(seconds)]
     os.environ.setdefault("KE_PHYSICS_THREADS", "1")  # a world a core: no worker threads of its own
-    try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for g in range(int(generations)):
-                worlds = list(pool.map(world_scores, range((population + cars - 1) // cars)))
-                scores = [s for world, _ in worlds for s in world]
-                lived = [s for _, world in worlds for s in world]
-                # as a race ranks: the ones that lasted the run first, then the farthest - a crash costs its place
-                order = sorted(range(population), key=lambda i: (not lived[i], -scores[i]))
-                place = [0] * population  # the tournaments go by the same ranking: higher, better
-                for rank, i in enumerate(order):
-                    place[i] = population - rank
-                if scores[order[0]] > best_score:
-                    best, best_score = list(genomes[order[0]]), scores[order[0]]
-                mean = sum(scores) / population
-                history.append((scores[order[0]], mean))
-                if report:
-                    report(g, scores[order[0]], mean, sum(lived) / population)
-                if keep:  # the generation, best first
-                    keep(g, [genomes[i] for i in order])
-                if lived[order[0]] and horizon[0] < longest:  # the best lasted the whole run: a longer one next
-                    horizon[0] = min(float(longest), horizon[0] * 2)
-                    if report_horizon:
-                        report_horizon(horizon[0])
-                if stop is not None and stop.is_set():
-                    break
-                born = [list(genomes[i]) for i in order[:elite]]
-                while len(born) < population:
-                    born.append(_child(rng, genomes[_pick(rng, place)], genomes[_pick(rng, place)], float(mutation)))
-                genomes = born
-    finally:
-        for a in arenas:
-            a.close()
+    # spawned, not forked: the editor's plugin has threads of its own, a fork would copy them half-way
+    with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"), initializer=_worker) as pool:
+        for g in range(int(generations)):
+            jobs = [(courses, judge, cars, mode, shape, brain, genomes[w * cars:(w + 1) * cars], horizon[0])
+                    for w in range((population + cars - 1) // cars)]
+            worlds = list(pool.map(_world, jobs))
+            scores = [s for world, _ in worlds for s in world]
+            lived = [s for _, world in worlds for s in world]
+            # as a race ranks: the ones that lasted the run first, then the farthest - a crash costs its place
+            order = sorted(range(population), key=lambda i: (not lived[i], -scores[i]))
+            place = [0] * population  # the tournaments go by the same ranking: higher, better
+            for rank, i in enumerate(order):
+                place[i] = population - rank
+            if scores[order[0]] > best_score:
+                best, best_score = list(genomes[order[0]]), scores[order[0]]
+            mean = sum(scores) / population
+            history.append((scores[order[0]], mean))
+            if report:
+                report(g, scores[order[0]], mean, sum(lived) / population)
+            if keep:  # the generation, best first
+                keep(g, [genomes[i] for i in order])
+            if lived[order[0]] and horizon[0] < longest:  # the best lasted the whole run: a longer one next
+                horizon[0] = min(float(longest), horizon[0] * 2)
+                if report_horizon:
+                    report_horizon(horizon[0])
+            if stop is not None and stop.is_set():
+                break
+            born = [list(genomes[i]) for i in order[:elite]]
+            while len(born) < population:
+                born.append(_child(rng, genomes[_pick(rng, place)], genomes[_pick(rng, place)], float(mutation)))
+            genomes = born
     return best, best_score, history
+
+
+_arenas = {}  # in a worker process: its worlds, by (scene, body, judge, robots, drive) - made once, kept for the training
+
+
+def _worker():
+    atexit.register(lambda: [a.close() for a in _arenas.values()])
+
+
+def _world(job):
+    """One world's robots, each driving every course in a worker process (train): (its worst score of them, whether it
+    lasted on all). The world is built anew for every run, so which process drives it changes nothing."""
+    courses, judge, cars, mode, shape, brain, genomes, seconds = job
+    runs = []
+    for file, body in courses:
+        key = (file, body, judge, cars, mode)
+        if key not in _arenas:
+            _arenas[key] = Arena(file, body, judge, cars, mode)
+        arena = _arenas[key]
+        runs.append((arena.episodes([Net(*shape) for _ in genomes], genomes, seconds, brain), arena.survived))
+    return [min(s) for s in zip(*(r[0] for r in runs))], [all(s) for s in zip(*(r[1] for r in runs))]
 
 
 def courses(brain, count, seed, folder):
