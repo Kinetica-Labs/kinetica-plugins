@@ -1,11 +1,14 @@
-"""«Мозг»: a neural network as the brain of a robot in the scene - its sensors in, its thrusts out - trained by natural
-selection in worlds with no window, then put on the body and played with ▶.
+"""«Мозг»: a neural network as the brain of a robot in the scene - its sensors in, its thrusts or a car's drive out -
+trained by natural selection in worlds with no window, then put on the body and played with ▶.
 
-The parts: network.py - the net (layers of any width, a memory of one step if asked); robot.py - what the brain sees
-and drives (the body, what hangs on it by joints, their sensors and thrusts); evolution.py - the training (a pool of
-kinetica-core worlds, one a CPU core; also run by hand: python3 evolution.py scene.kscene); scenes.py - the examples.
+The parts: network.py - the net (layers of any width, a memory of one step, an echo of its own command; its picture
+and its .brain.json file); robot.py - what the brain sees and drives; drive.py - a car's drive (tyres, motor, the
+steering by the gyroscope, the reflex that turns from a wall); evolution.py - the training (worker processes, one a
+CPU core; random tracks; also by hand: python3 evolution.py scene.kscene --tracks 4 --out best.brain.json); scenes.py -
+the examples and random tracks.
 
-    select a body → «Мозг на тело» → «Обучить» (the panel shows each generation) → «Поставить лучшего» → ▶
+    select a body → «Мозг на тело» → «Обучить» (the charts by generation, each one's best 20 driving here) →
+    «Поставить лучшего» → ▶
 
 The brain reads only its sensors - noise, counts and delays as the devices have them; the judge of the training reads
 the physics' truth to score a run, as a laboratory would, and nothing of it reaches the brain."""
@@ -272,142 +275,43 @@ def balance(scene):
 
 @command(label="Пример: гонка")
 def race(scene):
-    """A new scene: a closed track - a spline through its points, low walls along it - and a car at its start: a
-    sliding block with two thrusts at its back (their difference steers), a lidar's fan of 9 rays ahead, an IMU, and a
-    brain judged by the metres it makes along the track in 20 s."""
+    """A new scene: a closed track - a spline through its points, low walls along it - and a car at its start: a block
+    with a lidar on its roof and an IMU, its brain planning a turn and a speed that its drive holds (drive.py). The brain
+    comes trained (examples/race.brain.json: five tracks at once, eight it never saw driven clean): ▶ and it drives."""
     scene.ed.scene_new()
     car = scenes.race(scene)
     scene.editor.select(scene.objects[car])
-    return add(scene, "16, 8", False, 6.0, "track", 30.0, "car", 4.0)
+    wired = add(scene, "16, 8", False, 6.0, "track", 30.0, "car", 6.0)
+    load(scene, os.path.join(os.path.dirname(os.path.abspath(__file__)), "examples", "race.brain.json"))
+    return wired
 
 
 # ---------------------------------------------------------------------------
-# The net drawn: its neurons and weights over the track
+# The net drawn: a flat picture in the panel (network.picture)
 # ---------------------------------------------------------------------------
-_picture = {"on": True, "weights": None, "centre": None}
-EDGES = {"++": (1.0, 0.55, 0.1), "+": (0.55, 0.38, 0.22), "-": (0.22, 0.33, 0.55), "--": (0.2, 0.55, 1.0)}
+def _show_net(net, weights, wiring, card, title):
+    """The net in the panel's picture, its neurons lit as they are now; its inputs named, its outputs with their
+    values - a car's as the turn and the speed its brain asks for."""
+    out = net.seen[-1] if getattr(net, "seen", None) else [0.0] * net.sizes[-1]
+    if wiring.car:
+        turn, speed = drive.plan(out, card)
+        words = [f"поворот {turn:+.1f} рад/с".replace("-", "−"), f"скорость {speed:.1f} м/с"]
+        echo = ["эхо: поворот", "эхо: скорость"]
+    else:
+        words = [f"{name} {v:+.2f}".replace("-", "−") for (_, name), v in zip(wiring.outputs, out)]
+        echo = ["эхо: " + name for _, name in wiring.outputs]
+    show(net=network.picture(net, weights, wiring.names() + (echo if net.echo else []), words), net_title=title)
 
-
-def _centre(scene):
-    """Where the picture stands: over the middle of the track, else over the scene's centre."""
-    rows = scene.ed.component_list(type="brain.track")["components"]
-    if not rows:
-        return [0.0, 2.5, 0.0]
-    flat = [float(v) for v in rows[0]["values"]["points"]]
-    xs, zs = flat[0::2], flat[1::2]
-    return [(max(xs) + min(xs)) / 2, 2.0, (max(zs) + min(zs)) / 2]
-
-
-def _places(sizes, centre, width=7.0, height=5.0):
-    """Each neuron's place: the layers in columns along x, the neurons of one along z."""
-    out = []
-    for k, n in enumerate(sizes):
-        x = centre[0] - width / 2 + width * k / max(len(sizes) - 1, 1)
-        gap = min(height / max(n - 1, 1), 0.6)
-        out.append([[x, centre[1], centre[2] + (j - (n - 1) / 2) * gap] for j in range(n)])
-    return out
-
-
-def _draw_net(scene, net, weights, title=""):
-    """The net over the track: a weight a line - orange for one that excites, blue for one that inhibits, brighter the
-    stronger (the faintest left out) -, a neuron a point lit by what it holds now: yellow excited, blue inhibited, grey
-    near zero. The lines are drawn again only when the weights are other ones."""
-    if not _picture["on"]:
-        return
-    if _picture["centre"] is None:
-        _picture["centre"] = _centre(scene)
-    places = _places(net.sizes, _picture["centre"])
-    if _picture["weights"] is not weights:
-        bins, at = {k: [] for k in EDGES}, 0
-        for k, (seen, n) in enumerate(net.layers()):
-            for i in range(n):
-                for j in range(seen):
-                    w = weights[at + j]
-                    if j < net.sizes[k] and abs(w) > 0.15:  # a recurrent net's memory links are not drawn
-                        bins["++" if w > 1 else "+" if w > 0 else "--" if w < -1 else "-"] += [places[k][j], places[k + 1][i]]
-                at += seen + 1
-        for name, pts in bins.items():
-            if pts:
-                draw.segments(f"net/edge/{name}", pts, colour=EDGES[name])
-            else:
-                draw.clear(f"net/edge/{name}")
-        words = [f"входы {net.sizes[0]}"] + [f"скрытый {n} · {net.activation}" + (" · память" if net.recurrent else "") for n in net.sizes[1:-1]] + [f"выходы {net.sizes[-1]} · tanh"]
-        for k, word in enumerate(words):
-            top = places[k][-1]
-            draw.label(f"net/layer/{k}", [top[0], top[1], top[2] + 0.7], word, colour=(0.9, 0.9, 0.9))
-        _picture["weights"] = weights
-    lit = {"hi": [], "lo": [], "zero": []}
-    for k, values in enumerate(getattr(net, "seen", [])):
-        for j, v in enumerate(values[:net.sizes[k]]):
-            lit["hi" if v > 0.25 else "lo" if v < -0.25 else "zero"].append(places[k][j])
-    for name, colour in (("hi", (1.0, 0.9, 0.35)), ("lo", (0.35, 0.65, 1.0)), ("zero", (0.45, 0.45, 0.45))):
-        if lit[name]:
-            draw.points(f"net/node/{name}", lit[name], colour=colour, size=13)
-        else:
-            draw.clear(f"net/node/{name}")
-    if title:
-        c = _picture["centre"]
-        draw.label("net/title", [c[0], c[1] + 0.3, c[2] - 3.2], title, colour=(1.0, 1.0, 1.0), size=16)
-
-
-@command(label="Сеть: показать или скрыть")
-def picture(scene):
-    """The net's picture over the track on or off: its neurons lit as it drives, its weights as lines."""
-    _picture.update(on=not _picture["on"], weights=None, centre=None)
-    if not _picture["on"]:
-        draw.clear("net/")
-    return {"shown": _picture["on"]}
 
 
 # ---------------------------------------------------------------------------
 # Training in sight: the flock on the track in the editor's own world
 # ---------------------------------------------------------------------------
-_flock = {}  # while it trains in sight: its cars, their brains, colours and judges, and the generation's clock
+_flock = {}  # the parade: its cars, their brains, colours and judges, and the run's clock
 
 
 def _colour(hue):
     return colorsys.hsv_to_rgb(hue % 1.0, 0.9, 1.0)
-
-
-def _born(rng, a, b, mutation, rate=0.1):
-    """A child of two parents, as evolution._child makes one - uniform crossover, each gene nudged by a normal of
-    `mutation` with probability `rate` - and how many genes the radiation changed, and by how much in all."""
-    child = [x if rng.random() < 0.5 else y for x, y in zip(a, b)]
-    changed, by = 0, 0.0
-    for k, w in enumerate(child):
-        if rng.random() < rate:
-            nudge = rng.gauss(0.0, mutation)
-            child[k], changed, by = network.stored(w + nudge), changed + 1, by + abs(nudge)
-    return child, changed, by
-
-
-@command(label="Обучать на виду")
-def live(scene, population: int = field(30, range=(2, 200), label="Машинок на трассе"), generations: int = field(50, range=(1, 10000), label="Поколений"),
-         mutation: float = field(0.2, range=(0.0, 5.0), label="Радиация мутации"), elite: int = field(3, range=(0, 50), label="Лучших без изменений"),
-         seed: int = field(1, range=(0, 1000000), label="Зерно")):
-    """Natural selection you watch: a flock of copies of the selected robot in the editor's own world, each with its
-    brain, driven every frame and judged twice a second; one ruled out goes grey and stops; a generation over, the best
-    live on unchanged, the rest are born of two parents picked by tournament - a child's ring the mix of its parents'
-    colours, nudged by its mutation. Ctrl+Z after it - the flock gone."""
-    if _flock.get("thread") and _flock["thread"].is_alive():
-        raise ValueError("стая уже учится: «Остановить»")
-    body = _body(scene)
-    brain = _brain(scene, body)
-    cars, wirings, shape = _cars(scene, body, brain, int(population))
-    rng = network.new_rng(seed)
-    genomes = [network.Net(*shape).random_weights(rng) for _ in cars]
-    first = weights_of(brain.get("weights", ""))
-    if len(first) == network.Net(*shape).count():
-        genomes[0] = first
-    hues = [k / len(cars) for k in range(len(cars))]  # the founders: every one its own hue
-    _flock.clear()
-    _flock.update(cars=cars, wirings=wirings, nets=[network.Net(*shape) for _ in cars], genomes=genomes, hues=hues, marks=[""] * len(cars), rng=rng,
-                  aims=[(0.0, 0.0)] * len(cars), seconds=float(brain["seconds"]),
-                  brain=brain, body=body, generations=int(generations), mutation=float(mutation), elite=int(elite), stop=threading.Event())
-    _flock["thread"] = threading.Thread(target=_flock_run, args=(scene,), name="brain-flock", daemon=True)
-    _flock["thread"].start()
-    show(status=f"стая из {len(cars)} машинок учится на виду", radiation=f"σ {float(mutation):.2f}")
-    return {"cars": cars}
 
 
 def _cars(scene, body, brain, n):
@@ -469,57 +373,9 @@ def _parade(scene, done):
         draw.clear("flock/")
 
 
-def _flock_run(scene):
-    """The generations, played one after another in the editor's world: built paused, stepped half a second at a time
-    (no faster than the frames are ticked, faster than the clock), the judges' scores read, the next generation bred."""
-    f = _flock
-    try:
-        for g in range(f["generations"]):
-            f["generation"] = g
-            scores = _play(scene)
-            order = sorted(range(len(scores)), key=lambda i: -scores[i])
-            best = order[0]
-            if not _training.get("score") or scores[best] > _training["score"]:
-                _training.update(best=list(f["genomes"][best]), body=f["body"], score=scores[best])
-            if f["stop"].is_set():
-                break
-            rng, m = f["rng"], f["mutation"]
-            elite = order[:f["elite"]]
-            genomes, hues, marks, born, pairs, rays = [list(f["genomes"][i]) for i in elite], [f["hues"][i] for i in elite], ["★"] * len(elite), {}, {}, []
-            while len(genomes) < len(f["cars"]):
-                a, b = evolution._pick(rng, scores), evolution._pick(rng, scores)
-                child, changed, by = _born(rng, f["genomes"][a], f["genomes"][b], m)
-                genomes.append(child)
-                strong = a if scores[a] >= scores[b] else b  # the child wears the hue of the fitter parent, shifted as far as it mutated
-                hues.append(f["hues"][strong] + rng.gauss(0.0, 0.02 + 0.05 * by / max(m, 1e-6) / 10))
-                marks.append("")
-                rays.append((by, len(genomes) - 1, changed))
-                for p in {a, b}:
-                    born[p] = born.get(p, 0) + 1
-                pairs[(min(a, b), max(a, b))] = pairs.get((min(a, b), max(a, b)), 0) + 1
-            for _, k, changed in sorted(rays, reverse=True)[:3]:  # the three the radiation struck hardest
-                marks[k] = f"☢{changed}"
-            f.update(genomes=genomes, hues=hues, marks=marks)
-            worst = order[-1]
-            couple = max(pairs.items(), key=lambda kv: kv[1])[0] if pairs else (best, best)
-            lasted = sum(1 for i in range(len(scores)) if i in f["alive"])
-            show(status=f"поколение {g + 1} из {f['generations']}: лучший {scores[best]:.1f} м, средний {sum(scores) / len(scores):.1f} м, "
-                        f"дожило до конца {lasted} из {len(scores)}",
-                 generation=g + 1, best=round(scores[best], 3), mean=round(sum(scores) / len(scores), 3), clean=round(100 * lasted / len(scores), 1),
-                 family=f"гений №{best + 1} ({scores[best]:.0f} м), идиот №{worst + 1} ({scores[worst]:.1f} м); чаще всех пара "
-                        f"№{couple[0] + 1}×№{couple[1] + 1} ({pairs.get(couple, 0)} детей); больше всех детей - "
-                        + ", ".join(f"№{p + 1}: {n}" for p, n in sorted(born.items(), key=lambda kv: -kv[1])[:3]),
-                 radiation=f"σ {m:.2f}: у каждого ребёнка ~10 % генов сдвинуты; ☢ - три самых облучённых, ★ - элита без изменений")
-        show(status=f"стая выучилась: лучший {_training.get('score', 0):.1f} м - «Поставить лучшего», затем «Убрать стаю»")
-    except Exception as e:
-        show(status=f"обучение на виду прервано: {e}")
-    finally:
-        draw.clear("flock/")
-
-
 @command(label="Убрать стаю")
 def disband(scene):
-    """The flock's copies gone - the original car stays; the training stopped first."""
+    """The parade's copies gone - the original car stays; the parade stops, the training goes on."""
     if _flock.get("stop"):
         _flock["stop"].set()
     if _flock.get("thread"):
@@ -574,7 +430,7 @@ def referee(scene, dt, bodies):
             p = bodies.get(f["cars"][lead], {}).get("position", [0, 0, 0])
             laps = f" · {j.score() / j.length:.1f} круга" if hasattr(j, "length") else ""
             draw.label("flock/leader", [p[0], 1.25, p[2]], f"{f.get('title', '')}♛ №{lead + 1}: {j.score():.0f} м{laps}", colour=_colour(f["hues"][lead]), size=18)
-            _draw_net(scene, f["nets"][lead], f["genomes"][lead], f"сеть лидера №{lead + 1}")
+            _show_net(f["nets"][lead], f["genomes"][lead], f["wirings"][lead], f["brain"], f"лидер №{lead + 1}")
     if f["frame"] % 3 == 0:
         for i, car in enumerate(f["cars"]):
             p = bodies.get(car, {}).get("position")
@@ -637,7 +493,7 @@ def think(scene, dt, sensors):
             else:
                 commands.update(wiring.commands(outputs, power))
             if frame % (every * 6) == 0 and body == min(_live):
-                _draw_net(scene, net, weights, "сеть мозга")
+                _show_net(net, weights, wiring, car["card"] if wiring.car else {}, "мозг на теле")
         if wiring.car:
             commands[str(body)] = {"torque": _steer(wiring, sensors, car["aim"][0], car.get("moment"))}
         brain[4] = frame + 1
@@ -653,7 +509,6 @@ def _steer(wiring, sensors, turn, moment):
 @on_stop
 def end(scene):
     _live.clear()
-    _picture["weights"] = None
 
 
 ui.panel("Мозг",
@@ -661,8 +516,7 @@ ui.panel("Мозг",
          ui.section("Обучение", ui.value("status", "Ход", "выберите тело с тягой и датчиками"),
                     ui.chart("Эволюция", {"best": "лучший", "mean": "средний"}, x={"generation": "поколение"}),
                     ui.chart("Чистые заезды", {"clean": "доехали весь прогон"}, unit="%", x={"generation": "поколение"}),
-                    ui.value("family", "Кто дал потомство"), ui.value("radiation", "Радиация мутации"),
-                    ui.row(ui.button(train, "Обучить"), ui.button(live, "Обучать на виду"), ui.button(halt, "Остановить")),
+                    ui.row(ui.button(train, "Обучить"), ui.button(halt, "Остановить")),
                     ui.row(ui.button(apply, "Поставить лучшего"), ui.button(exam, "Экзамен: 100 кругов"), ui.button(disband, "Убрать стаю"))),
-         ui.section("Сеть", ui.button(picture, "Показать или скрыть"), ui.text("file", "", "Файл мозга (.brain.json)"),
+         ui.section("Сеть", ui.value("net_title", "Чья"), ui.svg("net", height=600), ui.text("file", "", "Файл мозга (.brain.json)"),
                     ui.row(ui.button(save, "Сохранить мозг"), ui.button(load, "Загрузить мозг"))))

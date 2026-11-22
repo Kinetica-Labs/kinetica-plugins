@@ -136,6 +136,19 @@ class RaceTests(unittest.TestCase):
             self.assertTrue(looked(judge.half - 0.25))  # its side 10 cm from the wall
             self.assertFalse(looked(judge.half - 0.14))  # its side at the wall: out
 
+    def test_the_example_brain_drives_the_race(self):
+        """The trained brain the race example comes with: two laps of the example's track, not a touch."""
+        with evolution._kinetica().Scene() as scene, tempfile.TemporaryDirectory() as folder:
+            car = scenes.race(scene)
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "examples", "race.brain.json"), encoding="utf-8") as f:
+                doc = network.read_brain_file(f.read())
+            scene.ed.component_set(id=car, type="brain.net", values={**doc["card"], "layers": "16, 8"})
+            file = os.path.join(folder, "race.kscene")
+            scene.ed.scene_save(file=file)
+            brain = dict(doc["card"], layers="16, 8", recurrent=False, echo=True)
+            laps, seconds, finished = evolution.exam(file, car, brain, doc["weights"], laps=2)
+            self.assertTrue(finished, f"{laps:.2f} laps, then a red card")
+
     def test_the_circuit_is_drivable(self):
         """Its tightest turn takes the most speed of the race's card on the tyres' grip: v^2 / R <= grip."""
         self.assertLess(4.0 ** 2 / scenes.tightest(scenes.spline(scenes.CIRCUIT)), drive.GRIP)
