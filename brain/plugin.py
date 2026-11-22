@@ -415,7 +415,7 @@ def _cars(scene, body, brain, n):
     hearing the noise the original does. (cars, their wirings, their nets' shape)."""
     ed = scene.ed
     ed.sim_stop()
-    ed.scene_tag(ids=[body], tag=evolution.TAG)
+    ed.scene_tag(ids=[body], tag=evolution.TAG, on=True)  # on: no `on` switches a tag the scene has off
     ed.scene_set(id=body, line="ignores", values=[evolution.TAG])
     for id, _, kind, _ in Wiring(scene, body).inputs:  # every car hears the noise the original does
         if kind in ("imu", "sonar", "wrench", "lidar"):

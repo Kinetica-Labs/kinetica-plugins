@@ -163,7 +163,7 @@ class Arena:
         if cars > 1:
             if Wiring(self.scene, body).joints:
                 raise ValueError("a robot of joined bodies trains one a world: «cars» 1")
-            ed.scene_tag(ids=[body], tag=TAG)
+            ed.scene_tag(ids=[body], tag=TAG, on=True)  # on: a scene tagged before keeps it (no `on` switches it off)
             ed.scene_set(id=body, line="ignores", values=[TAG])
             for id, _, kind, _ in Wiring(self.scene, body).inputs:  # every copy hears the noise the editor's one does:
                 seed = int(_value(_lines(self.scene, id), kind, "seed", 0) or 0)  # its seed, or its own id, as a seed of 0 means

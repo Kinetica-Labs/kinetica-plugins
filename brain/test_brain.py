@@ -107,6 +107,20 @@ class RaceTests(unittest.TestCase):
             alone = evolution.train(file, car, brain, population=10, generations=1, seconds=2.0, workers=1, seed=3, judge="track", cars=5)
             self.assertLessEqual(runs[0][2][0][0], alone[2][0][0])  # the worst of two tracks is no more than this one alone
 
+    def test_cars_ignore_each_other_in_a_scene_tagged_before(self):
+        """A scene whose car already has the tag (saved after a training): its copies still pass through each other."""
+        with evolution._kinetica().Scene() as scene, tempfile.TemporaryDirectory() as folder:
+            car = scenes.race(scene)
+            scene.ed.scene_tag(ids=[car], tag=evolution.TAG, on=True)
+            file = os.path.join(folder, "tagged.kscene")
+            scene.ed.scene_save(file=file)
+            arena = evolution.Arena(file, car, "track", 3, "car")
+            try:
+                tagged = [o["id"] for o in arena.scene.ed.scene_list(tag=evolution.TAG)["objects"]]
+                self.assertEqual(sorted(w.body for w in arena.wirings), sorted(tagged))  # each tagged, each ignoring the tag
+            finally:
+                arena.close()
+
     def test_a_touch_is_a_red_card(self):
         """The judge rules a car out the frame a corner of it reaches a wall, though its middle is well on the track."""
         with evolution._kinetica().Scene() as scene:
