@@ -115,7 +115,7 @@ def race(scene, points=CIRCUIT, width=1.8):
     track = ed.scene_put(block=f'entity "Трасса"\n  object id 0 visible 1 locked 1\n'
                                f'  shape mesh file "{_model(vertices, triangles)}" size {word(extent)} position {word(middle)} rotation 0 0 0 color 0.8 0.35 0.25\n'
                                f'  collider kind mesh fit 1 size 0.2 0.2 0.2 offset 0 0 0 rotation 0 0 0\nend')["id"]
-    ed.component_set(id=track, type="brain.track", values={"points": [round(v, 3) for p in line for v in p]})
+    ed.component_set(id=track, type="brain.track", values={"points": [round(v, 3) for p in line for v in p], "width": width})
     start, ahead = line[0], line[1]
     car = ed.scene_add(shape="box", name="Машинка", position=[start[0], 0.1, start[1]], size=[0.5, 0.2, 0.3], role="rigid")["id"]
     ed.scene_set(id=car, line="rigid", key="mass", values=[1])

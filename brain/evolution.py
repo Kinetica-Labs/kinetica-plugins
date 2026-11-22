@@ -18,7 +18,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from network import Net, hidden_of, new_rng, stored, weights_of, weights_text
-from robot import Wiring, read_world
+from robot import Wiring, _lines, _value, read_world
 
 
 def _kinetica():
@@ -70,9 +70,10 @@ class Upright:
 class Track:
     """A race: the metres along the track's middle line (its «brain.track», scenes.race) the robot made from where it
     began, laps counted on, back the other way taken off - the best of the run. The run ends when it has not gained
-    half a metre for 3 s: stuck at a wall, or going round in circles. Looked at twice a second."""
+    half a metre for 3 s: stuck at a wall, or going round in circles - or when it is off the track, farther from the
+    line than its walls. Looked at twice a second."""
     every = 0.5
-    lines = {}  # a track's line and the way along it, by the scene: read once a world
+    lines, widths = {}, {}  # a track's line and the way along it, and its width, by the scene: read once a world
 
     def __init__(self, scene, wiring):
         key = id(scene)
@@ -81,6 +82,7 @@ class Track:
             if not rows:
                 raise ValueError("«track» judges along a track: the scene has none («Пример: гонка» makes one)")
             flat = [float(v) for v in rows[0]["values"]["points"]]
+            Track.widths[key] = float(rows[0]["values"].get("width", 1.8))
             line = list(zip(flat[0::2], flat[1::2]))
             along = [0.0]
             for k in range(len(line)):
@@ -88,14 +90,14 @@ class Track:
                 along.append(along[-1] + ((q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2) ** 0.5)
             Track.lines[key] = (line, along)
         self.line, self.along = Track.lines[key]
-        self.length, self.body = self.along[-1], wiring.body
+        self.length, self.body, self.half = self.along[-1], wiring.body, Track.widths[key] / 2
         self.last, self.made, self.best, self.idle = None, 0.0, 0.0, 0.0
 
     def needs(self):
         return [self.body], []
 
     def where(self, x, z):
-        """How far along the middle line the nearest point to (x, z) is, m."""
+        """How far along the middle line the nearest point to (x, z) is, and how far from it, m."""
         best, at = float("inf"), 0.0
         for k in range(len(self.line)):
             (ax, az), (bx, bz) = self.line[k], self.line[(k + 1) % len(self.line)]
@@ -104,10 +106,12 @@ class Track:
             d = (ax + t * dx - x) ** 2 + (az + t * dz - z) ** 2
             if d < best:
                 best, at = d, self.along[k] + t * (self.along[k + 1] - self.along[k])
-        return at
+        return at, best ** 0.5
 
     def step(self, c, dt):
-        s = self.where(c.get(f"{self.body}/centre x", 0.0), c.get(f"{self.body}/centre z", 0.0))
+        s, off = self.where(c.get(f"{self.body}/centre x", 0.0), c.get(f"{self.body}/centre z", 0.0))
+        if off > self.half + 0.2:  # past a wall: off the track, the run is over
+            return False
         if self.last is not None:
             self.made += (s - self.last + self.length / 2) % self.length - self.length / 2  # across the start line: on
         self.last = s
@@ -141,6 +145,10 @@ class Arena:
                 raise ValueError("a robot of joined bodies trains one a world: «cars» 1")
             ed.scene_tag(ids=[body], tag=TAG)
             ed.scene_set(id=body, line="ignores", values=[TAG])
+            for id, _, kind, _ in Wiring(self.scene, body).inputs:  # every copy hears the noise the editor's one does:
+                seed = int(_value(_lines(self.scene, id), kind, "seed", 0) or 0)  # its seed, or its own id, as a seed of 0 means
+                if kind in ("imu", "sonar", "wrench", "lidar") and not seed:
+                    ed.scene_set(id=id, line=kind, key="seed", values=[id])
             y = self._height(body)
             for _ in range(cars - 1):
                 copy = ed.scene_duplicate(ids=[body])["ids"][0]
