@@ -84,6 +84,64 @@ class Net:
         return out
 
 
+def _glyph(activation, x, y, r, ink):
+    """A neuron's activation drawn in it: its curve across the circle - tanh and sigmoid an S between two flats, relu a
+    hinge - in `ink`, dark on a lit neuron, light on a dark one."""
+    if activation == "relu":
+        d = f"M{x - r * .65:.1f},{y + r * .35:.1f} L{x:.1f},{y + r * .35:.1f} L{x + r * .6:.1f},{y - r * .5:.1f}"
+    else:
+        lo = y + r * (0.45 if activation == "tanh" else 0.5)
+        d = (f"M{x - r * .7:.1f},{lo:.1f} L{x - r * .32:.1f},{lo - r * .04:.1f} C{x - r * .02:.1f},{lo - r * .08:.1f} {x + r * .02:.1f},"
+             f"{y - r * .41:.1f} {x + r * .32:.1f},{y - r * .41:.1f} L{x + r * .7:.1f},{y - r * .45:.1f}")
+    return f'<path d="{d}" fill="none" stroke="{ink}" stroke-width="{max(0.8, r / 7):.1f}"/>'
+
+
+def picture(net, weights, inputs=(), outputs=()):
+    """The net as an SVG picture (the «Мозг» panel's): its layers left to right, a neuron a circle lit by what it holds
+    now (net.seen: yellow excited, blue inhibited, dark near zero) with its activation's curve drawn in it, a weight a
+    line - orange excites, blue inhibits, the stronger the thicker (the faintest left out); `inputs`, `outputs`: their
+    words, the outputs' with their values."""
+    sizes, layers = net.sizes, net.layers()
+    height = 34 + 11.0 * max(max(sizes), 16)
+    xs = [120 + k * (252 - 120) / (len(sizes) - 1) for k in range(len(sizes))] if len(sizes) > 1 else [120]
+    steps = [min(26.0, (height - 34) / n) for n in sizes]  # a layer of few neurons: bigger ones, its curve readable
+    places = [[(xs[k], 26 + (height - 34 - steps[k] * n) / 2 + steps[k] * (j + 0.5)) for j in range(n)] for k, n in enumerate(sizes)]
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 {height:.0f}" font-family="sans-serif">']
+    at, links = 0, []
+    strongest = max((abs(w) for w in weights), default=1.0) or 1.0
+    for k, (seen, n) in enumerate(layers):
+        for i in range(n):
+            for j in range(seen):
+                w = weights[at + j]
+                if j < sizes[k] and abs(w) > 0.12 * strongest:  # a recurrent net's memory links are not drawn
+                    links.append((abs(w) / strongest, w > 0, places[k][j], places[k + 1][i]))
+            at += seen + 1
+    for m, up, (x1, y1), (x2, y2) in sorted(links):  # the weight's size its thickness, the strongest drawn last, on top
+        out.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{"#f0a040" if up else "#4a90e2"}" '
+                   f'stroke-width="{0.2 + 3.8 * m * m:.2f}" stroke-opacity="{0.2 + 0.7 * m:.2f}"/>')
+    values = getattr(net, "seen", [[0.0] * n for n in sizes])
+    for k, n in enumerate(sizes):
+        r = min(steps[k] * 0.42, 10.0)
+        for j, (x, y) in enumerate(places[k]):
+            v = values[k][j] if k < len(values) and j < len(values[k]) else 0.0
+            a = min(1.0, abs(v))
+            fill = (f"rgb({int(40 + 215 * a)},{int(40 + 190 * a)},{int(40 + 40 * a)})" if v >= 0
+                    else f"rgb({int(40 + 30 * a)},{int(40 + 110 * a)},{int(40 + 200 * a)})")
+            out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}" fill="{fill}" stroke="#888" stroke-width="0.5"/>')
+            if k > 0:
+                out.append(_glyph("tanh" if k == len(sizes) - 1 else net.activation, x, y, r, "#111" if a > 0.5 else "#ddd"))
+            words = inputs if k == 0 else outputs if k == len(sizes) - 1 else ()
+            if j < len(words):
+                left = k == 0
+                anchor = ' text-anchor="end"' if left else ""
+                out.append(f'<text x="{x + (-r - 3 if left else r + 3):.1f}" y="{y + 2.5:.1f}"{anchor} fill="#ccc" font-size="7">{words[j]}</text>')
+    heads = [f"входы {sizes[0]}"] + [f"{n} · {net.activation}" + (" · память" if net.recurrent else "") for n in sizes[1:-1]] + [f"{sizes[-1]} · tanh"]
+    for x, word in zip(xs, heads):
+        out.append(f'<text x="{x:.1f}" y="12" text-anchor="middle" fill="#eee" font-size="8">{word}</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
 def brain_file(net, weights, card, wiring, trained=None):
     """A trained brain as one JSON document - a *.brain.json file: its net (what it sees, its layers, what it gives),
     the robot it was wired to (Wiring.said), its card (the «Мозг» component's values but the weights: the drive, its

@@ -19,6 +19,8 @@ import multiprocessing
 import os
 import sys
 import tempfile
+import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 
 import drive
@@ -359,7 +361,17 @@ _arenas = {}  # in a worker process: its worlds, by (scene, body, judge, robots,
 
 
 def _worker():
+    """A worker process's start: its worlds closed when it ends, and it ends when the training's process does - the
+    plugin stopped or restarted, the editor closed - instead of driving on for no one."""
     atexit.register(lambda: [a.close() for a in _arenas.values()])
+    parent = os.getppid()
+
+    def orphaned():
+        while os.getppid() == parent:
+            time.sleep(1.0)
+        os._exit(0)  # its worlds' kinetica-core processes end too: their pipes close
+
+    threading.Thread(target=orphaned, name="brain-orphan", daemon=True).start()
 
 
 def _world(job):

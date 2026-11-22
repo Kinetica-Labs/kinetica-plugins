@@ -122,6 +122,21 @@ class Wiring:
         """robot_command's commands: each force's strength, its output times `power` newtons."""
         return {str(id): {"strength": round(o * float(power), 6)} for (id, _), o in zip(self.outputs, outputs)}
 
+    def names(self):
+        """Each input's words, in the order numbers() gives them: a ray its angle, an IMU's six their axes."""
+        out = []
+        for id, name, kind, spec in self.inputs:
+            if kind == "lidar":
+                h, v, fov = int(spec.get("rays_h", 1)), int(spec.get("rays_v", 1)), float(spec.get("fov_h_deg", 0))
+                out += [f"луч {(-fov / 2 + fov * k / (h - 1)) if h > 1 else 0:+.0f}°".replace("-", "−") for k in range(h)] * v
+            elif kind == "imu":
+                out += ["a x", "a y", "a z", "ω x", "ω y", "ω z"]
+            elif kind == "wrench":
+                out += ["F x", "F y", "F z", "M x", "M y", "M z"]
+            else:
+                out.append(name)
+        return out
+
     def said(self):
         """The wiring in words: «5 входов: Лидар 1 (5 лучей); 2 выхода: Тяга 1, Тяга 2»."""
         ins = []
