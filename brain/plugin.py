@@ -32,8 +32,15 @@ class Net:
     recurrent = field(False, label="Память на шаг", help="скрытые слои видят свои значения шага назад: сеть узнаёт скорость по двум положениям")
     rate_hz = field(30.0, unit="Гц", range=(1.0, 60.0), label="Решений в секунду")
     power = field(15.0, unit="Н", range=(0.0, 10000.0), label="Тяга при выходе 1")
+    judge = field("upright", choices=sorted(evolution.JUDGES), label="Судья", help="upright - шест стоит; track - путь по трассе, м")
+    seconds = field(8.0, unit="с", range=(0.5, 600.0), label="Прогон")
     weights = field("", label="Веса", help="числа сети через запятую; пусто - мозг ещё не обучен")
     score = field(0.0, label="Счёт обучения")
+
+
+@component(label="Трасса", help="Средняя линия трассы (x, z по точкам): по ней судья track меряет путь машинки")
+class Track:
+    points = field("", label="Точки")
 
 
 _training = {"thread": None, "stop": None, "best": None, "body": None, "score": None}
@@ -58,7 +65,8 @@ def _brain(scene, body):
 
 @command(label="Мозг на тело")
 def add(scene, layers: str = field("8", label="Скрытые слои"), recurrent: bool = field(False, label="Память на шаг"),
-        power: float = field(15.0, unit="Н", label="Тяга при выходе 1")):
+        power: float = field(15.0, unit="Н", label="Тяга при выходе 1"), judge: str = field("upright", choices=sorted(evolution.JUDGES), label="Судья"),
+        seconds: float = field(8.0, unit="с", range=(0.5, 600.0), label="Прогон")):
     """The selected body gets a brain: its sensors (and those of all that hangs on it) in, its thrusts out; the
     thrusts set to 0 - from now on the brain sets them."""
     body = _body(scene)
@@ -68,7 +76,8 @@ def add(scene, layers: str = field("8", label="Скрытые слои"), recurr
     for id, _ in wiring.outputs:
         scene.ed.scene_set(id=id, line="effect", key="strength", values=[0])
     scene.ed.component_set(id=body, type=TYPE, values={"layers": str(layers), "activation": "tanh", "recurrent": bool(recurrent),
-                                                         "rate_hz": 30.0, "power": float(power), "weights": "", "score": 0.0})
+                                                         "rate_hz": 30.0, "power": float(power), "judge": str(judge), "seconds": float(seconds),
+                                                         "weights": "", "score": 0.0})
     size = network.Net(wiring.size, hidden_of(layers), len(wiring.outputs), "tanh", recurrent).count()
     show(status=f"Мозг на теле: {wiring.said()}; весов {size}")
     return {"body": body, "inputs": wiring.size, "outputs": len(wiring.outputs), "weights": size, "wiring": wiring.said()}
@@ -76,15 +85,16 @@ def add(scene, layers: str = field("8", label="Скрытые слои"), recurr
 
 @command(label="Обучить")
 def train(scene, population: int = field(100, range=(4, 2000), label="Особей"), generations: int = field(30, range=(1, 10000), label="Поколений"),
-          seconds: float = field(8.0, unit="с", range=(0.5, 600.0), label="Прогон"), mutation: float = field(0.2, range=(0.0, 5.0), label="Мутация"),
-          elite: int = field(2, range=(0, 100), label="Лучших без изменений"), workers: int = field(0, range=(0, 256), label="Потоков (0 - ядра)"),
-          seed: int = field(1, range=(0, 1000000), label="Зерно"), judge: str = field("upright", choices=sorted(evolution.JUDGES), label="Судья")):
+          mutation: float = field(0.2, range=(0.0, 5.0), label="Мутация"), elite: int = field(2, range=(0, 100), label="Лучших без изменений"),
+          workers: int = field(0, range=(0, 256), label="Потоков (0 - ядра)"), seed: int = field(1, range=(0, 1000000), label="Зерно"),
+          cars: int = field(0, range=(0, 1000), label="Роботов в мире (0 - сам)")):
     """Natural selection in worlds with no window, one a CPU core: the panel shows each generation; «Поставить
     лучшего» puts the best on the body. It goes on in the background - the editor stays free."""
     if _training["thread"] and _training["thread"].is_alive():
         raise ValueError("обучение уже идёт: «Остановить»")
     body = _body(scene)
     brain = _brain(scene, body)
+    seconds, judge = float(brain["seconds"]), str(brain["judge"])  # the brain's own task
     file = os.path.join(tempfile.gettempdir(), f"kinetica-brain-{os.getpid()}.kscene")
     with open(file, "w", encoding="utf-8") as out:
         out.write(scene.ed.scene_get()["text"])  # the scene as it is now, unsaved edits too; the person's file untouched
@@ -99,7 +109,7 @@ def train(scene, population: int = field(100, range=(4, 2000), label="Особе
     def run():
         try:
             weights, score, _ = evolution.train(file, body, brain, population, generations, seconds, mutation, elite, workers, seed, judge,
-                                                report, stop, first=weights_of(brain.get("weights", "")))
+                                                report, stop, first=weights_of(brain.get("weights", "")), cars=cars)
             _training.update(best=weights, body=body, score=score)
             show(status=f"готово: лучший {score:.2f} - «Поставить лучшего», затем ▶")
         except Exception as e:  # the panel says it; the editor goes on
@@ -139,7 +149,18 @@ def balance(scene):
     scene.ed.scene_new()
     cart = scenes.balance(scene)
     scene.editor.select(scene.objects[cart])
-    return add(scene, "8", False, 15.0)
+    return add(scene, "8", False, 15.0, "upright", 8.0)
+
+
+@command(label="Пример: гонка")
+def race(scene):
+    """A new scene: a closed track - a spline through its points, low walls along it - and a car at its start: a
+    sliding block with two thrusts at its back (their difference steers), a lidar's fan of 9 rays ahead, an IMU, and a
+    brain judged by the metres it makes along the track in 20 s."""
+    scene.ed.scene_new()
+    car = scenes.race(scene)
+    scene.editor.select(scene.objects[car])
+    return add(scene, "12", False, 6.0, "track", 20.0)
 
 
 @on_play
@@ -177,6 +198,6 @@ def end(scene):
 
 
 ui.panel("Мозг",
-         ui.section("Робот", ui.button(add, "Мозг на тело"), ui.button(balance, "Пример: балансир")),
+         ui.section("Робот", ui.button(add, "Мозг на тело"), ui.row(ui.button(balance, "Пример: балансир"), ui.button(race, "Пример: гонка"))),
          ui.section("Обучение", ui.value("status", "Ход", "выберите тело с тягой и датчиками"), ui.value("curve", "Лучший по поколениям"),
                     ui.row(ui.button(train, "Обучить"), ui.button(halt, "Остановить")), ui.button(apply, "Поставить лучшего")))

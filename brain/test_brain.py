@@ -58,5 +58,19 @@ class EvolutionTests(unittest.TestCase):
             self.assertGreater(runs[0][1], 0.0)
 
 
+class RaceTests(unittest.TestCase):
+    def test_cars_side_by_side_one_result_whatever_the_workers(self):
+        """Five cars a world on the mesh track: the same scores for 1 and 3 workers; the track is one body."""
+        with evolution._kinetica().Scene() as scene, tempfile.TemporaryDirectory() as folder:
+            car = scenes.race(scene)
+            self.assertEqual(len(scene.ed.scene_list(kind="entity")["objects"]), 3)  # the floor, the track, the car
+            file = os.path.join(folder, "race.kscene")
+            scene.ed.scene_save(file=file)
+            brain = {"layers": "4", "activation": "tanh", "recurrent": False, "rate_hz": 30.0, "power": 6.0}
+            runs = [evolution.train(file, car, brain, population=10, generations=2, seconds=2.0, workers=n, seed=3, judge="track", cars=5)
+                    for n in (1, 3)]
+            self.assertEqual(runs[0][2], runs[1][2])
+
+
 if __name__ == "__main__":
     unittest.main()

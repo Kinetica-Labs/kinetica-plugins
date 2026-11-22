@@ -27,37 +27,43 @@ def _spec(lines):
     return {}
 
 
+def read_world(scene):
+    """What the wirings are made of, read once: each joint's two bodies, each sensor's holder, kind and datasheet, each
+    force's body and mode. Many robots in one world (evolution.Arena) are wired from one reading."""
+    world = {"links": {}, "sensors": [], "forces": []}
+    for j in scene.ed.scene_list(kind="joint")["objects"]:
+        lines = _lines(scene, j["id"])
+        world["links"][j["id"]] = (int(_value(lines, "link", "a", 0)), int(_value(lines, "link", "b", 0)))
+    for s in sorted(scene.ed.scene_list(kind="sensor")["objects"], key=lambda o: o["id"]):
+        lines = _lines(scene, s["id"])
+        kind = next((w[0] for w in lines if w and w[0] in SENSOR_KINDS), None)
+        world["sensors"].append((s["id"], s["name"], kind, _spec(lines), int(_value(lines, "object", "parent", 0))))
+    for f in sorted(scene.ed.scene_list(kind="force")["objects"], key=lambda o: o["id"]):
+        lines = _lines(scene, f["id"])
+        world["forces"].append((f["id"], f["name"], int(_value(lines, "object", "parent", 0)), _value(lines, "effect", "mode")))
+    return world
+
+
 class Wiring:
     """inputs: (id, name, kind, spec) of each sensor; outputs: (id, name) of each force that acts all the time (a
     thrust - a push once is the world's, not the brain's); joints: the robot's own."""
 
-    def __init__(self, scene, body):
+    def __init__(self, scene, body, world=None):
+        world = world or read_world(scene)
         self.body = int(body)
-        links = {}
-        for j in scene.ed.scene_list(kind="joint")["objects"]:
-            lines = _lines(scene, j["id"])
-            links[j["id"]] = (int(_value(lines, "link", "a", 0)), int(_value(lines, "link", "b", 0)))
         bodies, self.joints = {self.body}, []
         grown = True
         while grown:  # the bodies joined to the robot's, and theirs, ...
             grown = False
-            for jid, (a, b) in sorted(links.items()):
+            for jid, (a, b) in sorted(world["links"].items()):
                 if jid not in self.joints and (a in bodies or b in bodies):
                     self.joints.append(jid)
                     bodies |= {x for x in (a, b) if x}
                     grown = True
         self.bodies = sorted(bodies)
         holders = set(self.bodies) | set(self.joints)
-        self.inputs, self.outputs = [], []
-        for s in sorted(scene.ed.scene_list(kind="sensor")["objects"], key=lambda o: o["id"]):
-            lines = _lines(scene, s["id"])
-            kind = next((w[0] for w in lines if w and w[0] in SENSOR_KINDS), None)
-            if int(_value(lines, "object", "parent", 0)) in holders and kind not in (None, "stereo"):
-                self.inputs.append((s["id"], s["name"], kind, _spec(lines)))
-        for f in sorted(scene.ed.scene_list(kind="force")["objects"], key=lambda o: o["id"]):
-            lines = _lines(scene, f["id"])
-            if int(_value(lines, "object", "parent", 0)) in set(self.bodies) and _value(lines, "effect", "mode") == "constant":
-                self.outputs.append((f["id"], f["name"]))
+        self.inputs = [(id, name, kind, spec) for id, name, kind, spec, parent in world["sensors"] if parent in holders and kind not in (None, "stereo")]
+        self.outputs = [(id, name) for id, name, parent, mode in world["forces"] if parent in set(self.bodies) and mode == "constant"]
         self.size = len(self.numbers({}))
 
     def numbers(self, readings):
