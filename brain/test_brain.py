@@ -1,11 +1,13 @@
 """The brain's tests (python3 -m unittest test_brain, in this folder): the net against numbers worked by hand, its memory,
 the weights as the scene keeps them, the balancer's wiring, and selection's result the same for 1 and 4 workers. The
 editor's Python package and kinetica-core are found as evolution.py finds them (KE_EDITOR, else ../../kinetica-editor)."""
+import json
 import math
 import os
 import tempfile
 import unittest
 
+import drive
 import evolution
 import network
 import scenes
@@ -27,6 +29,24 @@ class NetTests(unittest.TestCase):
         self.assertNotEqual(net.forward(w, [1.0]), first, "a recurrent net remembers the step before")
         net.reset()
         self.assertEqual(net.forward(w, [1.0]), first, "reset: the run begins again")
+
+    def test_echo(self):
+        net = network.Net(1, [2], 2, echo=True)  # it sees 1 input and its 2 outputs of the step before
+        w = net.random_weights(network.new_rng(5))
+        self.assertEqual(net.sizes[0], 3)
+        first = net.forward(w, [0.5])
+        self.assertEqual(net.seen[0], [0.5, 0.0, 0.0], "a run begins with nothing told")
+        net.forward(w, [0.5])
+        self.assertEqual(net.seen[0], [0.5] + first, "then it hears what it told")
+
+    def test_a_brain_file_round_trip(self):
+        net = network.Net(3, [4], 2, echo=True)
+        w = net.random_weights(network.new_rng(1))
+        doc = network.read_brain_file(json.dumps(network.brain_file(net, w, {"drive": "car"}, "3 входа")))
+        self.assertEqual((doc["net"]["inputs"], doc["net"]["layers"], doc["net"]["outputs"], doc["net"]["echo"]), (3, [4], 2, True))
+        self.assertEqual(doc["weights"], w)
+        with self.assertRaises(ValueError):
+            network.read_brain_file(json.dumps({**doc, "weights": w[:-1]}))
 
     def test_weights_as_the_scene_keeps_them(self):
         w = [network.stored(x) for x in (0.123456789, -3.14159265, 1e-7)]
@@ -66,10 +86,63 @@ class RaceTests(unittest.TestCase):
             self.assertEqual(len(scene.ed.scene_list(kind="entity")["objects"]), 3)  # the floor, the track, the car
             file = os.path.join(folder, "race.kscene")
             scene.ed.scene_save(file=file)
-            brain = {"layers": "4", "activation": "tanh", "recurrent": False, "rate_hz": 30.0, "power": 6.0}
+            brain = {"layers": "4", "activation": "tanh", "recurrent": False, "rate_hz": 30.0, "power": 6.0, "drive": "car", "speed": 4.0}
             runs = [evolution.train(file, car, brain, population=10, generations=2, seconds=2.0, workers=n, seed=3, judge="track", cars=5)
                     for n in (1, 3)]
             self.assertEqual(runs[0][2], runs[1][2])
+
+    def test_more_tracks_one_result_whatever_the_workers(self):
+        """A random track besides the scene's: the scores the worst of the two, the same for 1 and 3 workers."""
+        with evolution._kinetica().Scene() as scene, tempfile.TemporaryDirectory() as folder:
+            car = scenes.race(scene)
+            brain = {"layers": "4", "activation": "tanh", "recurrent": False, "rate_hz": 30.0, "power": 6.0, "drive": "car", "speed": 4.0,
+                     "reflex": 6.0, "echo": True}
+            scene.ed.component_set(id=car, type="brain.net", values=brain)
+            file = os.path.join(folder, "race.kscene")
+            scene.ed.scene_save(file=file)
+            more = evolution.courses(brain, 1, 3, folder)
+            runs = [evolution.train(file, car, brain, population=10, generations=2, seconds=2.0, workers=n, seed=3, judge="track", cars=5,
+                                    tracks=more) for n in (1, 3)]
+            self.assertEqual(runs[0][2], runs[1][2])
+            alone = evolution.train(file, car, brain, population=10, generations=1, seconds=2.0, workers=1, seed=3, judge="track", cars=5)
+            self.assertLessEqual(runs[0][2][0][0], alone[2][0][0])  # the worst of two tracks is no more than this one alone
+
+    def test_a_touch_is_a_red_card(self):
+        """The judge rules a car out the frame a corner of it reaches a wall, though its middle is well on the track."""
+        with evolution._kinetica().Scene() as scene:
+            car = scenes.race(scene)
+            scene.ed.sim_step(frames=0)
+            at = next(x for x in scene.ed.sim_state()["shapes"] if x["id"] == car)
+            _, side = drive.axes(at["rotation"])
+            judge = evolution.Track(scene, Wiring(scene, car, drive="car"))
+            def looked(shift):  # the car moved sideways by `shift` m, as turned as it is
+                x, z = at["position"][0] + shift * side[0], at["position"][2] + shift * side[2]
+                return judge.step({f"{car}/centre x": x, f"{car}/centre z": z, f"{car}/rotation": at["rotation"]}, 1 / 60)
+            self.assertTrue(looked(0.0))
+            self.assertTrue(looked(judge.half - 0.25))  # its side 10 cm from the wall
+            self.assertFalse(looked(judge.half - 0.14))  # its side at the wall: out
+
+    def test_the_circuit_is_drivable(self):
+        """Its tightest turn takes the most speed of the race's card on the tyres' grip: v^2 / R <= grip."""
+        self.assertLess(4.0 ** 2 / scenes.tightest(scenes.spline(scenes.CIRCUIT)), drive.GRIP)
+
+
+class DriveTests(unittest.TestCase):
+    def test_tyres_take_the_skid_out_and_the_motor_holds_the_speed(self):
+        car = {"rotation": [0.0, 90.0, 0.0], "velocity": [0.0, 0.0, 0.0], "mass": 2.0}  # its x along the world's -z
+        forward, _ = drive.axes(car["rotation"])
+        self.assertAlmostEqual(forward[2], -1.0, places=9)
+        push = drive.tyres(car, 4.0)
+        self.assertAlmostEqual(push[2], -2.0 * drive.PUSH, places=9)  # short of 4 m/s: the motor's most, forward
+        skid = drive.tyres(dict(car, velocity=[1.0, 0.0, 0.0]), 0.0)  # sliding sideways at 1 m/s
+        self.assertAlmostEqual(skid[0], -2.0 * drive.GRIP, places=9)  # the grip's most, against the skid
+
+    def test_the_plan(self):
+        card = {"speed": 6.0, "speed_min": 1.0, "turn": 3.0}
+        self.assertEqual(drive.plan([1.0, -1.0], card), (3.0, 1.0))
+        self.assertEqual(drive.plan([-0.5, 1.0], card), (-1.5, 6.0))
+        self.assertEqual(drive.plan([0.25, -1.0], dict(card, reflex=2.0), 0.25), (2.25, 1.0))  # the reflex turns it away more
+        self.assertEqual(drive.plan([0.5, -1.0], dict(card, reflex=6.0), 0.5)[0], 3.0)  # no more than the steering gives
 
 
 if __name__ == "__main__":

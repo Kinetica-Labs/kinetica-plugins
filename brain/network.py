@@ -1,10 +1,15 @@
 """The brain's network (plugin.py has the rest: the commands, the robot's wiring, the run's tick; evolution.py breeds
 it): numbers in from the robot's sensors, numbers out to its drives. Layers of any width and depth - a perceptron,
 a deep one, or a recurrent one whose hidden layers also see their own values of the step before (an Elman network: a
-memory of one step, enough to tell a speed from two positions; a loop needs that step of delay). Every weight and
+memory of one step, enough to tell a speed from two positions; a loop needs that step of delay). One with an echo
+sees its own outputs of the step before among its inputs - what it told its drives (an efference copy): a car's brain
+knows the speed it asked for, which no sensor of it reads. Every weight and
 bias is one number of one flat list, so the genetic algorithm breeds a brain as a list. Only the standard library."""
+import json
 import math
 import random
+
+FORMAT, VERSION = "kinetica-brain", 1  # a trained brain's file, *.brain.json (brain_file)
 
 ACTIVATIONS = {
     "tanh": math.tanh,
@@ -18,10 +23,11 @@ class Net:
     output layer through tanh always, so each output is a command from -1 to 1. Weights in the list neuron by neuron,
     layer by layer: a neuron's weights over what its layer sees (the layer before, then its own memory), then its bias."""
 
-    def __init__(self, inputs, hidden, outputs, activation="tanh", recurrent=False):
+    def __init__(self, inputs, hidden, outputs, activation="tanh", recurrent=False, echo=False):
         if activation not in ACTIVATIONS:
             raise ValueError(f"activation is one of {', '.join(ACTIVATIONS)}, not {activation!r}")
-        self.sizes = [int(inputs)] + [int(n) for n in hidden] + [int(outputs)]
+        self.echo = int(outputs) if echo else 0  # its outputs of the step before, after its sensors' numbers
+        self.sizes = [int(inputs) + self.echo] + [int(n) for n in hidden] + [int(outputs)]
         if min(self.sizes) < 1:
             raise ValueError(f"every layer needs a neuron: {self.sizes}")
         self.activation, self.recurrent = activation, bool(recurrent)
@@ -48,9 +54,9 @@ class Net:
         """The outputs for these inputs, by these weights; a recurrent net remembers its hidden values for the next."""
         if len(weights) != self.count():
             raise ValueError(f"{len(weights)} weights for a net of {self.count()}")
-        if len(inputs) != self.sizes[0]:
-            raise ValueError(f"{len(inputs)} inputs for a net of {self.sizes[0]}")
-        act, x, at = ACTIVATIONS[self.activation], [float(v) for v in inputs], 0
+        if len(inputs) != self.sizes[0] - self.echo:
+            raise ValueError(f"{len(inputs)} inputs for a net of {self.sizes[0] - self.echo}")
+        act, x, at = ACTIVATIONS[self.activation], [float(v) for v in inputs] + (self.seen[-1] if self.echo else []), 0
         layers = self.layers()
         self.seen = [x]  # each layer's values of this step, the inputs first: what a picture of the net lights
         for k, (seen, n) in enumerate(layers):
@@ -78,9 +84,33 @@ class Net:
         return out
 
 
+def brain_file(net, weights, card, wiring, trained=None):
+    """A trained brain as one JSON document - a *.brain.json file: its net (what it sees, its layers, what it gives),
+    the robot it was wired to (Wiring.said), its card (the «Мозг» component's values but the weights: the drive, its
+    speeds and reflex, the rate), how it was trained, and its weights. Readable by eye and by any JSON reader."""
+    return {"format": FORMAT, "version": VERSION,
+            "net": {"inputs": net.sizes[0] - net.echo, "layers": net.sizes[1:-1], "outputs": net.sizes[-1], "activation": net.activation,
+                    "recurrent": net.recurrent, "echo": bool(net.echo), "weights": net.count()},
+            "wiring": wiring, "card": card, "trained": trained or {}, "weights": [stored(w) for w in weights]}
+
+
+def read_brain_file(text):
+    """The document of a *.brain.json file, checked: its format, a version this plugin reads, its weights' count."""
+    doc = json.loads(text)
+    if doc.get("format") != FORMAT:
+        raise ValueError(f"not a brain's file: its format is {doc.get('format')!r}, not {FORMAT!r}")
+    if int(doc.get("version", 0)) > VERSION:
+        raise ValueError(f"a brain's file of version {doc['version']}: this plugin reads up to {VERSION} - update it")
+    if len(doc.get("weights", [])) != int(doc["net"]["weights"]):
+        raise ValueError(f"the file has {len(doc.get('weights', []))} weights for a net of {doc['net']['weights']}")
+    return doc
+
+
 def hidden_of(text):
-    """The hidden layers' widths from their words: "8" or "16, 8"; "" or "0": none (the inputs straight to the outputs)."""
-    widths = [int(w) for w in str(text).replace(";", ",").split(",") if w.strip()]
+    """The hidden layers' widths from their words: "8" or "16, 8" (or the list the editor reads "16, 8" back as);
+    "" or "0": none (the inputs straight to the outputs)."""
+    items = text if isinstance(text, (list, tuple)) else str(text).strip("[] ").replace(";", ",").split(",")
+    widths = [int(float(w)) for w in items if str(w).strip()]
     return [w for w in widths if w > 0]
 
 

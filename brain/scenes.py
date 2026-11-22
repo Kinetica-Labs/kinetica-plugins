@@ -3,9 +3,14 @@ editor's operations, the same in the window and in a kinetica-core world."""
 import hashlib
 import math
 import os
+import random
 
-# The race's track: its middle line through these points (x, z, metres), closed - a spline drawn through them.
-CIRCUIT = [(0, 0), (6, -1.5), (11, 0), (13, 4), (10, 7.5), (5, 6), (2, 9.5), (-3, 10.5), (-8, 8.5), (-9.5, 3.5), (-6, -1)]
+import drive
+
+# The race's track: its middle line through these points (x, z, metres), closed - a spline drawn through them. Its
+# tightest turn is 2.4 m round: a car at 4 m/s takes it with 6.7 m/s^2 of its tyres' 9 (drive.GRIP) - a turn tighter
+# than speed^2 / grip no car makes at that speed, and every one dies there (the first circuit had one of 1.34 m).
+CIRCUIT = [(x * 1.3, z * 1.3) for x, z in ((0, 0), (6, -1.5), (11, 0), (13.5, 4), (11, 8), (6, 7.5), (2.5, 10), (-3, 11), (-8, 9), (-10, 4), (-6.5, -0.5))]
 
 
 def balance(scene):
@@ -82,10 +87,11 @@ def walls(line, width, thickness=0.12, height=0.6):
     return vertices, triangles
 
 
-def _model(vertices, triangles):
-    """The model's file: OBJ in the plugin's own folder of tracks, named by what it holds (the same track, the same file)."""
+def _model(vertices, triangles, folder=None):
+    """The model's file: OBJ in the plugin's own folder of tracks (or `folder`), named by what it holds (the same
+    track, the same file)."""
     text = "".join(f"v {x:.4f} {y:.4f} {z:.4f}\n" for x, y, z in vertices) + "".join(f"f {a + 1} {b + 1} {c + 1}\n" for a, b, c in triangles)
-    folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracks")
+    folder = folder or os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracks")
     os.makedirs(folder, exist_ok=True)
     file = os.path.join(folder, "track-" + hashlib.sha1(text.encode()).hexdigest()[:12] + ".obj")
     if not os.path.exists(file):
@@ -94,11 +100,59 @@ def _model(vertices, triangles):
     return file
 
 
-def race(scene, points=CIRCUIT, width=1.8):
+def closest_return(line, width):
+    """How near the line comes back to itself: the least distance between two of its points farther apart along it
+    than 3 widths, m."""
+    n, along = len(line), [0.0]
+    for k in range(n):
+        along.append(along[-1] + math.dist(line[k], line[(k + 1) % n]))
+    lap, best = along[-1], float("inf")
+    for i in range(n):
+        for j in range(i + 1, n):
+            gap = along[j] - along[i]
+            if min(gap, lap - gap) > 3 * width:
+                best = min(best, math.dist(line[i], line[j]))
+    return best
+
+
+# A random track's kinds, by the training's turn: its control points (the more, the more bends) and how far each strays
+# from the round (the more, the sharper - hairpins and S-bends).
+KINDS = ((8, 0.2), (12, 0.35), (16, 0.45), (20, 0.4))
+
+
+def random_track(seed, turns=12, wobble=0.35, width=1.8, slowest=1.0, tries=2000):
+    """A drivable closed track drawn from `seed`: `turns` control points round a centre, each at its own angle and
+    distance (the radius times 1 +- `wobble`), the spline through them - kept when its tightest turn is wide enough for
+    the inner wall and for the slowest speed on the tyres' grip, and it never comes back near itself (no wall through
+    another); else the next draw. The control points (race's `points`)."""
+    rng, radius = random.Random(seed), 4.0 + 0.9 * turns  # more turns, more room for them
+    for _ in range(tries):
+        angles = sorted(2 * math.pi * (k + rng.uniform(-0.3, 0.3)) / turns for k in range(turns))
+        points = [(radius * (1 + rng.uniform(-wobble, wobble)) * math.cos(a), radius * (1 + rng.uniform(-wobble, wobble)) * math.sin(a))
+                  for a in angles]
+        line = spline(points)
+        if tightest(line) > max(width / 2 + 0.3, slowest ** 2 / drive.GRIP) and closest_return(line, width) > 2 * width + 0.5:
+            return points
+    raise ValueError(f"no drivable track of {turns} turns in {tries} draws")
+
+
+def tightest(line):
+    """The tightest turn of a closed line, its radius in metres (through each point and its two neighbours)."""
+    n, out = len(line), float("inf")
+    for k in range(n):
+        a, b, c = line[k - 1], line[k], line[(k + 1) % n]
+        area2 = abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+        if area2 > 1e-9:
+            out = min(out, math.dist(a, b) * math.dist(b, c) * math.dist(c, a) / (2 * area2))
+    return out
+
+
+def race(scene, points=CIRCUIT, width=1.8, folder=None):
     """A closed track - its middle line a spline through `points`, two walls `width` apart along it, one static body of
     triangles («Трасса», a mesh collider), the line kept in its «brain.track» (what the judge measures the way along) -
-    and a car at its start: a sliding block with two thrusts at its back, left and right (their difference steers it),
-    a lidar's fan of 9 rays over 150 degrees ahead and an IMU. Returns the car's id."""
+    and a car at its start: a block with a lidar on its roof - a fan of 21 rays over 200 degrees ahead - and an IMU - its
+    brain steers it and its drive (drive.py) does the rest: tyres, motor, steering by the IMU's gyroscope. Returns the
+    car's id."""
     ed = scene.ed
     line = spline(points)
     vertices, triangles = walls(line, width)
@@ -113,18 +167,18 @@ def race(scene, points=CIRCUIT, width=1.8):
     ed.world_set(line="physics", key="substeps", values=[4])  # blocks sliding on a floor: 4 a frame are plenty, 32 a waste
     word = lambda v: " ".join(f"{x:.4f}" for x in v)
     track = ed.scene_put(block=f'entity "Трасса"\n  object id 0 visible 1 locked 1\n'
-                               f'  shape mesh file "{_model(vertices, triangles)}" size {word(extent)} position {word(middle)} rotation 0 0 0 color 0.8 0.35 0.25\n'
+                               f'  shape mesh file "{_model(vertices, triangles, folder)}" size {word(extent)} position {word(middle)} rotation 0 0 0 color 0.8 0.35 0.25\n'
                                f'  collider kind mesh fit 1 size 0.2 0.2 0.2 offset 0 0 0 rotation 0 0 0\nend')["id"]
     ed.component_set(id=track, type="brain.track", values={"points": [round(v, 3) for p in line for v in p], "width": width})
     start, ahead = line[0], line[1]
     car = ed.scene_add(shape="box", name="Машинка", position=[start[0], 0.1, start[1]], size=[0.5, 0.2, 0.3], role="rigid")["id"]
     ed.scene_set(id=car, line="rigid", key="mass", values=[1])
     ed.scene_set(id=car, line="rigid", key="friction", values=[0.2])
-    for side in (1, -1):
-        thrust = ed.scene_add_force(shape="directional", mode="constant", body=car, strength=0, at=[start[0] - 0.2, 0.1, start[1] + side * 0.12])["id"]
-        ed.scene_turn(ids=[thrust], axis=[0, 0, 1], degrees=-90)  # its +Y along the car's +x
     lidar = ed.assembly_sensor(target=car, kind="lidar", face="+x", model="TFmini-S")["id"]
-    ed.sensor_spec(sensor=lidar, spec={"rays_h": 9, "fov_h_deg": 150, "max_m": 8, "rate_hz": 30})
+    ed.sensor_spec(sensor=lidar, spec={"rays_h": 21, "fov_h_deg": 200, "max_m": 8, "rate_hz": 30})  # 200 degrees: the walls beside it too; a ray each 10 degrees
+    # on the roof's middle, as robots carry one: its 10 cm it cannot see (min_m) stay inside the car - on the nose they
+    # were the road ahead, and a car at a wall read it as free
+    ed.scene_set(id=lidar, line="pose", key="position", values=[0, 0.1, 0])
     ed.assembly_sensor(target=car, kind="imu", face="+y")
     ed.scene_turn(ids=[car], axis="y", degrees=_heading(start, ahead))
     return car

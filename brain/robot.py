@@ -46,9 +46,12 @@ def read_world(scene):
 
 class Wiring:
     """inputs: (id, name, kind, spec) of each sensor; outputs: (id, name) of each force that acts all the time (a
-    thrust - a push once is the world's, not the brain's); joints: the robot's own."""
+    thrust - a push once is the world's, not the brain's); joints: the robot's own. A car (drive "car", drive.py) has
+    two outputs - the planner's: the turn it wants and the speed - which its drive holds, the turn by its IMU's
+    gyroscope (`gyro`), and its net hears them back the step after (network.Net's echo: the speed it asked for, which
+    no sensor of a car without wheels reads); `count` - the net's outputs."""
 
-    def __init__(self, scene, body, world=None):
+    def __init__(self, scene, body, world=None, drive="thrusts"):
         world = world or read_world(scene)
         self.body = int(body)
         bodies, self.joints = {self.body}, []
@@ -65,19 +68,35 @@ class Wiring:
         self.inputs = [(id, name, kind, spec) for id, name, kind, spec, parent in world["sensors"] if parent in holders and kind not in (None, "stereo")]
         self.outputs = [(id, name) for id, name, parent, mode in world["forces"] if parent in set(self.bodies) and mode == "constant"]
         self.size = len(self.numbers({}))
+        self.car = drive == "car"
+        self.gyro = next((id for id, _, kind, _ in self.inputs if kind == "imu"), None)
+        self.count = 2 if self.car else len(self.outputs)
+        self.sides = None  # the first fan of rays: where its right half and its left half are among the numbers
+        at = 0
+        for _, _, kind, spec in self.inputs:
+            n = int(spec.get("rays_h", 1)) * int(spec.get("rays_v", 1)) if kind == "lidar" else {"imu": 6, "wrench": 6}.get(kind, 1)
+            if kind == "lidar" and int(spec.get("rays_v", 1)) == 1 and n > 1 and self.sides is None:
+                self.sides = (at, at + n // 2, at + n - n // 2, at + n)  # rays from its right to its left
+            at += n
+        self.footprint = None
+        if self.car and scene is not None:
+            shape = next(w for w in scene.ed.scene_get(id=self.body)["lines"] if w and w[0] == "shape")
+            self.footprint = [float(shape[shape.index("size") + 1 + k]) for k in range(3)]
 
     def numbers(self, readings):
-        """The net's inputs from the sensors' readings ({id: reading} as sensor_read and a run's tick give them)."""
+        """The net's inputs from the sensors' readings ({id: reading} as sensor_read and a run's tick give them). A ray's
+    distance comes as nearness: 0 where it runs free, 1 at a wall touching the sensor - the empty way a neutral zero,
+    the danger the signal."""
         out = []
         for id, _, kind, spec in self.inputs:
             r = readings.get(id) or {}
             if kind == "lidar":
                 n, far = int(spec.get("rays_h", 1)) * int(spec.get("rays_v", 1)), float(spec.get("max_m", 12)) or 1.0
                 ranges = list(r.get("ranges") or [])[:n]
-                out += [d / far if d >= 0 else 1.0 for d in ranges] + [1.0] * (n - len(ranges))  # no return: as far as it sees
+                out += [1.0 - d / far if d >= 0 else 0.0 for d in ranges] + [0.0] * (n - len(ranges))  # no return: nothing near
             elif kind == "sonar":
                 d, far = r.get("distance"), float(spec.get("max_m", 4)) or 1.0
-                out.append(d / far if d is not None and d >= 0 else 1.0)
+                out.append(1.0 - d / far if d is not None and d >= 0 else 0.0)
             elif kind == "encoder":
                 v = r.get("reading")
                 out.append(math.tanh(2.0 * (r.get("relative", 0.0) if v is None else v)))  # a joint's useful tilt is a fraction of a radian
@@ -91,6 +110,14 @@ class Wiring:
                 out.append(math.tanh(r.get("effort", 0.0) / 10.0))
         return out
 
+    def away(self, numbers):
+        """How much nearer the walls on the right are than those on the left, -1..1 (its rays' mean nearness): the
+        turn away from them, a reflex's (drive.plan) - 0 with no fan of rays."""
+        if self.sides is None:
+            return 0.0
+        r0, r1, l0, l1 = self.sides
+        return sum(numbers[r0:r1]) / (r1 - r0) - sum(numbers[l0:l1]) / (l1 - l0)
+
     def commands(self, outputs, power):
         """robot_command's commands: each force's strength, its output times `power` newtons."""
         return {str(id): {"strength": round(o * float(power), 6)} for (id, _), o in zip(self.outputs, outputs)}
@@ -101,4 +128,5 @@ class Wiring:
         for id, name, kind, spec in self.inputs:
             n = int(spec.get("rays_h", 1)) * int(spec.get("rays_v", 1)) if kind == "lidar" else {"imu": 6, "wrench": 6}.get(kind, 1)
             ins.append(f"{name} ({n})" if n > 1 else name)
-        return f"{self.size} входов: {', '.join(ins) or 'нет'}; {len(self.outputs)} выходов: {', '.join(n for _, n in self.outputs) or 'нет'}"
+        outs = "поворот и скорость (привод машины)" if self.car else ", ".join(n for _, n in self.outputs) or "нет"
+        return f"{self.size} входов: {', '.join(ins) or 'нет'}; {self.count} выходов: {outs}"
