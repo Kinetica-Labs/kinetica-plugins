@@ -1,6 +1,7 @@
 """depz.ai devices in the editor (https://depz.ai). For now the orientation board «IMU Sensor BNO086 USB» (fusion up to
-400 Hz, accelerometer ±8 g, gyroscope ±2000 °/s): «Подключить» finds it, starts the orientation, the acceleration and the
-rotation rate, keeps their last samples with the board's own clock in µs, and draws them in the bottom panel;
+400 Hz, accelerometer ±8 g, gyroscope ±2000 °/s): «Подключить» (the plugin's tab of the inspector) finds it, starts the
+orientation, the acceleration and the rotation rate, keeps their last samples with the board's own clock in µs, and
+gives them to the plots («Графики»);
 depz_imu_read gives them to whoever asks - the console, a script, an agent, another plugin. The board's protocol is
 bno086.py beside this file, its tests test_depz.py."""
 import collections
@@ -39,7 +40,7 @@ def _status(board):
 
 
 def _chart(board, hz=30):
-    """The bottom panel's lines: the newest sample of each stream, `hz` times a second, on the board's clock; the words
+    """The plots' lines: the newest sample of each stream, `hz` times a second, on the board's clock; the words
     once a second. Ends with the board; unplugged, says so."""
     shown, tick, t0 = None, 0, None
     while not board.stopped.wait(1 / hz):
@@ -123,13 +124,13 @@ def imu_read(scene, last: int = field(0, range=(0, KEEP), label="Последн�
     return out
 
 
-ui.panel("depz: ориентация",
-         ui.row(ui.text("port", "", "Порт"), ui.number("rate", 100, "Частота", "Гц", (1, 400)),
-                ui.choice("orientation", tuple(ORIENTATION), label="Ориентация"),
-                ui.button(imu_connect, "Подключить"), ui.button(imu_disconnect, "Отключить")),
-         ui.value("status", "Датчик", "не подключён"),
-         ui.row(ui.chart("Углы", {"roll": "крен", "pitch": "тангаж", "yaw": "рыскание"}, unit="°", x=X),
-                ui.chart("Ускорение", {"ax": "x", "ay": "y", "az": "z"}, unit="м/с²", x=X),
-                ui.chart("Угловая скорость", {"gx": "x", "gy": "y", "gz": "z"}, unit="°/с", x=X),
-                ui.chart("Кватернион", {"qw": "w", "qx": "x", "qy": "y", "qz": "z"}, x=X)),
-         place="bottom")
+ui.panel("depz",
+         ui.section("Датчик ориентации BNO086",
+                    ui.text("port", "", "Порт"), ui.number("rate", 100, "Частота", "Гц", (1, 400)),
+                    ui.choice("orientation", tuple(ORIENTATION), label="Ориентация"),
+                    ui.row(ui.button(imu_connect, "Подключить"), ui.button(imu_disconnect, "Отключить")),
+                    ui.value("status", "Датчик", "не подключён")),
+         ui.chart("Углы", {"roll": "крен", "pitch": "тангаж", "yaw": "рыскание"}, unit="°", x=X),
+         ui.chart("Ускорение", {"ax": "x", "ay": "y", "az": "z"}, unit="м/с²", x=X),
+         ui.chart("Угловая скорость", {"gx": "x", "gy": "y", "gz": "z"}, unit="°/с", x=X),
+         ui.chart("Кватернион", {"qw": "w", "qx": "x", "qy": "y", "qz": "z"}, x=X))
