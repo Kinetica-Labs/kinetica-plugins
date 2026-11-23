@@ -165,10 +165,26 @@ class JointCar:
         chassis, rotation = _position(scene, self.body), _rotation(scene, self.body)
         ahead, aside = drive_axes(rotation)  # the chassis' own x and z: the car may stand turned
         local = lambda p: [sum((p[k] - chassis[k]) * axis[k] for k in range(3)) for axis in (ahead, (0.0, 1.0, 0.0), aside)]
-        self.steer, self.driven = [], []  # (joint, left?), (joint, sign, radius, sideways: its z from the chassis' middle)
+        # (joint, left?); (joint, sign, radius, sideways: its z from the chassis' middle, DC motor: (driver, K, V) or None)
+        self.steer, self.driven = [], []
         knuckles, wheels = [], []
+        bridges = {}  # joint -> its driver
+        for d in scene.ed.scene_list(kind="driver")["objects"]:
+            bridge = next((w for w in _lines(scene, d["id"]) if w and w[0] == "bridge"), [])
+            if "joint" in bridge:
+                bridges[int(_after(bridge, "joint", 0))] = d["id"]
         for jid in self.wiring.joints:
             lines = _lines(scene, jid)
+            motor = next((w for w in lines if w and w[0] == "dcmotor" and len(w) > 1 and w[1] == "rx"), None)
+            if motor and jid in bridges:  # a DC motor on a driver: driven by its duty
+                a = world["links"][jid][0]
+                size = next(w for w in scene.ed.scene_get(id=a)["lines"] if w and w[0] == "shape")
+                voltage = float(_after(motor, "voltage", 0))
+                at = local(_position(scene, a))
+                self.driven.append((jid, -1.0 if voltage < 0 else 1.0, float(size[size.index("size") + 1]) / 2, at[2],
+                                    (bridges[jid], float(_after(motor, "constant", 0)), abs(voltage) or 1.0)))
+                wheels.append(at)
+                continue
             drive = next((w for w in lines if w and w[0] == "drive" and len(w) > 1 and w[1] == "rx"), None)
             if not drive:
                 continue
@@ -181,7 +197,7 @@ class JointCar:
             elif velocity != 0:
                 size = next(w for w in scene.ed.scene_get(id=a)["lines"] if w and w[0] == "shape")
                 radius = float(size[size.index("size") + 1]) / 2
-                self.driven.append((jid, -1.0 if velocity < 0 else 1.0, radius, at[2]))
+                self.driven.append((jid, -1.0 if velocity < 0 else 1.0, radius, at[2], None))
                 wheels.append(at)
         mean = lambda points, k: sum(p[k] for p in points) / len(points) if points else 0.0
         self.base = max(0.05, mean(knuckles, 0) - mean(wheels, 0)) if knuckles and wheels else 0.5
@@ -198,13 +214,27 @@ class JointCar:
             stabiliser.hear(gyro, dt)
             turn = speed = 0.0
             out = {str(j): {"target": 0.0} for j, _ in self.steer}
-            out.update({str(j): {"velocity": 0.0} for j, *_ in self.driven})
+            out.update(self._wheels(lambda *_: 0.0))
             return out
         left, right = drive_ackermann(stabiliser.turn(turn, gyro, dt), speed, self.base, self.track, most)
         out = {str(j): {"target": round(left if is_left else right, 5)} for j, is_left in self.steer}
         # An electronic differential: each driven wheel at the speed of its own track round the turn - the left (-z) one,
         # inside a left turn, slower - so neither drags the other (a rigid axle's wheels slip and the car runs wide).
-        out.update({str(j): {"velocity": round(sign * (speed + turn * z) / radius, 5)} for j, sign, radius, z in self.driven})
+        out.update(self._wheels(lambda radius, z: (speed + turn * z) / radius))
+        return out
+
+    def _wheels(self, spin):
+        """Each driven wheel at its forward spin (rad/s, of its radius and its z): a velocity motor told the spin; a DC
+        motor on a driver the duty that spins it so with no load, d = ω K / V (an RC car's speed controller: under load,
+        uphill, on a sagging pack it turns slower - the physics' to say)."""
+        out = {}
+        for j, sign, radius, z, motor in self.driven:
+            w = spin(radius, z)
+            if motor:
+                driver, constant, volts = motor
+                out[str(driver)] = {"duty": round(max(-1.0, min(1.0, sign * w * constant / volts)), 5)}
+            else:
+                out[str(j)] = {"velocity": round(sign * w, 5)}
         return out
 
 
