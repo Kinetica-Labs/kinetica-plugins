@@ -19,7 +19,7 @@ import random
 import struct
 import zlib
 
-from kinetica.plugin import command, field, show, ui
+from kinetica.plugin import command, field, show, tr, ui
 
 SIZE = 256  # pixels a side: it repeats over the surface, so a small picture is enough
 
@@ -195,11 +195,11 @@ def apply(scene, kind: str = _KIND, grain: float = _GRAIN, variant: int = _VARIA
     """Рисунок, сделанный из этих чисел, на каждую выделенную фигуру: бесшовная картинка и её рельеф, один шаг отмены."""
     shapes = [o for o in scene.editor.selection if o.kind == "entity"]
     if not shapes:
-        raise ValueError("выделите фигуру: текстура ложится на выделенное")
+        raise ValueError(tr("выделите фигуру: текстура ложится на выделенное"))
     picture = ""
     for shape in shapes:
         picture = _put(scene, shape, kind, grain, variant, (tuple(base), tuple(mark)) if own else None, repeats, relief, maps)
-    show(state=f"{kind}: {os.path.basename(picture)} на {len(shapes)} фиг.")
+    show(state=tr("{kind}: {file} на {n} фиг.").format(kind=kind, file=os.path.basename(picture), n=len(shapes)))
     return {"file": picture, "ids": [shape.id for shape in shapes]}
 
 
@@ -212,7 +212,7 @@ def samples(scene):
         _put(scene, cube, kind, 1.0, 0, None, 2.0, 2.0)
         made.append(cube)
     scene.editor.select(*made)
-    show(state=f"образцы: {len(made)} кубов")
+    show(state=tr("образцы: {n} кубов").format(n=len(made)))
     return {"ids": [cube.id for cube in made]}
 
 

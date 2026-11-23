@@ -20,7 +20,7 @@ import sys
 import tempfile
 
 import drive
-from network import Net, brain_file, hidden_of, new_rng, stored, weights_of, weights_text
+from network import Net, brain_file, hidden_of, new_rng, stored, tr, weights_of, weights_text
 from robot import Wiring, _lines, _value, read_world
 
 
@@ -84,7 +84,7 @@ class Track:
         if key not in Track.lines:
             rows = scene.ed.component_list(type="brain.track")["components"]
             if not rows:
-                raise ValueError("«track» judges along a track: the scene has none («Пример: гонка» makes one)")
+                raise ValueError(tr("«track» judges along a track: the scene has none («Пример: гонка» makes one)"))
             flat = [float(v) for v in rows[0]["values"]["points"]]
             Track.widths[key] = float(rows[0]["values"].get("width", 1.8))
             line = list(zip(flat[0::2], flat[1::2]))
@@ -432,7 +432,7 @@ def brain_of(scene, body=None):
             v["layers"] = str(v["layers"])
             v["recurrent"], v["echo"] = (v[k] in (True, 1, "1", "true") for k in ("recurrent", "echo"))
             return row["id"], v
-    raise ValueError("no body has a «Мозг»: put one on (brain_add)")
+    raise ValueError(tr("no body has a «Мозг»: put one on (brain_add)"))
 
 
 def main():

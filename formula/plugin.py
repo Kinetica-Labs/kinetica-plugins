@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
-from kinetica.plugin import command, component, draw, field, on_change, show, ui
+from kinetica.plugin import command, component, draw, field, on_change, show, tr, ui
 
 _LATEX = field("F = ma", label="LaTeX", help="Формула, как между $ и $: T = 2\\pi\\sqrt{\\frac{L}{g}}")
 _COLOUR = dict(range=(0.0, 1.0), label="Цвет: красный, зелёный, синий")
@@ -72,7 +72,7 @@ def typeset(latex):
 
 def _svg(latex):
     quiet = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}  # no console flashing up on Windows
-    missing = "не установлен: формулы набирают программы latex и dvisvgm (TeX Live или MiKTeX)"
+    missing = tr("не установлен: формулы набирают программы latex и dvisvgm (TeX Live или MiKTeX)")
     with tempfile.TemporaryDirectory(prefix="kinetica-formula-") as folder:
         cyrillic = "" if latex.isascii() else "\\usepackage[T2A]{fontenc}\n\\usepackage[utf8]{inputenc}\n"
         with open(os.path.join(folder, "f.tex"), "w", encoding="utf-8") as tex:
@@ -85,7 +85,7 @@ def _svg(latex):
             raise Problem("LaTeX " + missing) from None
         if not os.path.exists(os.path.join(folder, "f.dvi")):
             with open(os.path.join(folder, "f.log"), encoding="utf-8", errors="replace") as log:
-                said = next((line[2:].strip() for line in log if line.startswith("!")), "страница не получилась")
+                said = next((line[2:].strip() for line in log if line.startswith("!")), tr("страница не получилась"))
             raise Problem("LaTeX: " + said)
         try:
             subprocess.run(["dvisvgm", "--no-fonts", "--exact-bbox", "--precision=4", "-o", "f.svg", "f.dvi"], cwd=folder,
@@ -107,10 +107,10 @@ def _path(data, dx, dy):
         if tokens[at].isalpha():
             command, at = tokens[at], at + 1
         elif command in ("", "Z", "z"):
-            raise Problem("dvisvgm записал путь, который не читается")
+            raise Problem(tr("dvisvgm записал путь, который не читается"))
         kind, relative = command.upper(), command.islower()
         if kind not in count:
-            raise Problem(f"dvisvgm записал команду пути «{command}», которой этот плагин не знает")
+            raise Problem(tr("dvisvgm записал команду пути «{command}», которой этот плагин не знает").format(command=command))
         n = [float(t) for t in tokens[at:at + count[kind]]]
         at += count[kind]
         if relative:
@@ -152,7 +152,7 @@ def _outlines(svg):
     defined = {id(p) for defs in root.iter() if tag(defs) == "defs" for p in defs.iter()}
     for element in root.iter():
         if element.get("transform"):
-            raise Problem("dvisvgm записал преобразование, которого этот плагин не знает")
+            raise Problem(tr("dvisvgm записал преобразование, которого этот плагин не знает"))
         if id(element) in defined:
             continue
         if tag(element) == "use":
@@ -167,7 +167,7 @@ def _outlines(svg):
     xs = [v for g in glyphs for op in g for v in op[1::2]]
     ys = [v for g in glyphs for op in g for v in op[2::2]]
     if not xs:
-        raise Problem("формула пуста: LaTeX ничего не нарисовал")
+        raise Problem(tr("формула пуста: LaTeX ничего не нарисовал"))
     mx, my = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
     word = lambda v: format(v, ".4f").rstrip("0").rstrip(".") or "0"  # noqa: E731
     return [" ".join(" ".join([op[0]] + [word((v - (my if k % 2 else mx)) / 10 * (-1 if k % 2 else 1)) for k, v in enumerate(op[1:])])
@@ -186,7 +186,7 @@ def redraw(scene):
             try:
                 outlines = typeset(str(v["latex"]))
             except Problem as problem:
-                problems.append(f"«{v['latex']}» — {problem}")
+                problems.append(tr("«{latex}» — {problem}").format(latex=v["latex"], problem=problem))
                 continue
             key = f"{kind.__name__.lower()}/{id}"
             edge = EDGE if v["outline"] else {}
@@ -203,7 +203,7 @@ def redraw(scene):
     _drawn.update(keys)
     for words in problems:
         print("formula:", words)
-    show(state="⚠ " + problems[0] if problems else f"формул в сцене: {len(keys)}")
+    show(state="⚠ " + problems[0] if problems else tr("формул в сцене: {n}").format(n=len(keys)))
 
 
 def _put(scene, kind, latex):

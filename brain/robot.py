@@ -6,6 +6,8 @@ physics never reaches a brain. Only the standard library; the scene is a kinetic
 no window."""
 import math
 
+from network import tr
+
 SENSOR_KINDS = ("encoder", "imu", "sonar", "touch", "wrench", "effort", "stereo", "lidar")
 
 
@@ -128,7 +130,7 @@ class Wiring:
         for id, name, kind, spec in self.inputs:
             if kind == "lidar":
                 h, v, fov = int(spec.get("rays_h", 1)), int(spec.get("rays_v", 1)), float(spec.get("fov_h_deg", 0))
-                out += [f"луч {(-fov / 2 + fov * k / (h - 1)) if h > 1 else 0:+.0f}°".replace("-", "−") for k in range(h)] * v
+                out += [tr("луч {a:+.0f}°").format(a=(-fov / 2 + fov * k / (h - 1)) if h > 1 else 0).replace("-", "−") for k in range(h)] * v
             elif kind == "imu":
                 out += ["a x", "a y", "a z", "ω x", "ω y", "ω z"]
             elif kind == "wrench":
@@ -143,5 +145,5 @@ class Wiring:
         for id, name, kind, spec in self.inputs:
             n = int(spec.get("rays_h", 1)) * int(spec.get("rays_v", 1)) if kind == "lidar" else {"imu": 6, "wrench": 6}.get(kind, 1)
             ins.append(f"{name} ({n})" if n > 1 else name)
-        outs = "поворот и скорость (привод машины)" if self.car else ", ".join(n for _, n in self.outputs) or "нет"
-        return f"{self.size} входов: {', '.join(ins) or 'нет'}; {self.count} выходов: {outs}"
+        outs = tr("поворот и скорость (привод машины)") if self.car else ", ".join(n for _, n in self.outputs) or tr("нет")
+        return tr("{n} входов: {ins}; {m} выходов: {outs}").format(n=self.size, ins=", ".join(ins) or tr("нет"), m=self.count, outs=outs)

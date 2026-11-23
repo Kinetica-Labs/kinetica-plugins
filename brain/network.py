@@ -9,6 +9,15 @@ import json
 import math
 import random
 
+def tr(text):
+    """The window's language for a word shown to a person (kinetica.plugin.tr); the word itself where the plugin SDK is not at hand."""
+    try:
+        from kinetica.plugin import tr as words
+    except ImportError:
+        return text
+    return words(text)
+
+
 FORMAT, VERSION = "kinetica-brain", 1  # a trained brain's file, *.brain.json (brain_file)
 
 ACTIVATIONS = {
@@ -135,7 +144,7 @@ def picture(net, weights, inputs=(), outputs=()):
                 left = k == 0
                 anchor = ' text-anchor="end"' if left else ""
                 out.append(f'<text x="{x + (-r - 3 if left else r + 3):.1f}" y="{y + 2.5:.1f}"{anchor} fill="#ccc" font-size="7">{words[j]}</text>')
-    heads = [f"входы {sizes[0]}"] + [f"{n} · {net.activation}" + (" · память" if net.recurrent else "") for n in sizes[1:-1]] + [f"{sizes[-1]} · tanh"]
+    heads = [tr("входы {n}").format(n=sizes[0])] + [f"{n} · {net.activation}" + (tr(" · память") if net.recurrent else "") for n in sizes[1:-1]] + [f"{sizes[-1]} · tanh"]
     for x, word in zip(xs, heads):
         out.append(f'<text x="{x:.1f}" y="12" text-anchor="middle" fill="#eee" font-size="8">{word}</text>')
     out.append("</svg>")

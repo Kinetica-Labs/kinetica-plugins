@@ -9,7 +9,7 @@ import math
 import os
 import threading
 
-from kinetica.plugin import command, field, show, ui
+from kinetica.plugin import command, field, show, tr, ui
 
 import bno086
 
@@ -32,11 +32,12 @@ def _rate(samples):
 
 
 def _status(board):
-    words = {"quat": "ориентация", "accel": "ускорение", "gyro": "угл. скорость"}
+    words = {"quat": tr("ориентация"), "accel": tr("ускорение"), "gyro": tr("угл. скорость")}
     with _lock:
-        rates = " · ".join(f"{words[s]} {_rate(d):.0f} Гц" for s, d in _imu["streams"].items())
+        rates = " · ".join(f"{words[s]} {_rate(d):.0f} {tr('Гц')}" for s, d in _imu["streams"].items())
         t = max((d[-1][0] for d in _imu["streams"].values()), default=0)
-    return f"{_imu['device']} на {_imu['port']} · {rates} · потеряно пакетов {board.lost} · часы платы {t / 1e6:.1f} с"
+    return tr("{device} на {port} · {rates} · потеряно пакетов {lost} · часы платы {clock:.1f} с").format(
+        device=_imu["device"], port=_imu["port"], rates=rates, lost=board.lost, clock=t / 1e6)
 
 
 def _chart(board, hz=30):
@@ -63,7 +64,7 @@ def _chart(board, hz=30):
             values["status"] = _status(board)
         show(**values)
     if _imu["board"] is board:
-        show(status=f"связь с платой на {_imu['port']} потеряна")
+        show(status=tr("связь с платой на {port} потеряна").format(port=_imu["port"]))
 
 
 @command(label="Подключить датчик ориентации")
@@ -75,17 +76,17 @@ def imu_connect(scene, port: str = field("", label="Порт", help="пусто 
     imu_disconnect(scene)
     path = port or bno086.find_port()
     if not path:
-        raise RuntimeError("плата BNO086 не найдена: подключите её по USB или впишите порт")
+        raise RuntimeError(tr("плата BNO086 не найдена: подключите её по USB или впишите порт"))
     board = bno086.Board(path, _sample)
     device = board.text(bno086.GET_DEVICE_NAME)
     taken = [r for r in (ORIENTATION[orientation], 0x01, 0x02) if board.feature(r, rate)]
     if not taken:
         board.close()
-        raise RuntimeError(f"{path}: плата не отвечает на команды" + ("" if device else " (это точно BNO086?)"))
+        raise RuntimeError(tr("{path}: плата не отвечает на команды").format(path=path) + ("" if device else tr(" (это точно BNO086?)")))
     with _lock:
         _imu.update(board=board, port=os.path.realpath(path), device=f"{device} {board.text(bno086.GET_SERIAL)}".strip(), streams={}, taken=taken)
     threading.Thread(target=_chart, args=(board,), name="depz-chart", daemon=True).start()
-    show(status=f"{_imu['device']} на {_imu['port']}: жду отсчётов…")
+    show(status=tr("{device} на {port}: жду отсчётов…").format(device=_imu["device"], port=_imu["port"]))
     return {"port": _imu["port"], "device": _imu["device"], "streams": len(taken)}
 
 
@@ -100,7 +101,7 @@ def imu_disconnect(scene):
         for r in _imu.get("taken", ()):
             board.feature(r, 0)
     board.close()
-    show(status="не подключён")
+    show(status=tr("не подключён"))
     return {"connected": False}
 
 

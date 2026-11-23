@@ -17,7 +17,7 @@ import math
 import os
 
 import kinetica as ke
-from kinetica.plugin import command, draw, on_play, on_stop, on_tick, show, ui
+from kinetica.plugin import command, draw, on_play, on_stop, on_tick, show, tr, ui
 
 EXAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(ke.__file__)))), "examples")
 KEPT = os.path.join(os.path.expanduser("~"), "Kinetica", "showcase")  # the pieces' models and the titles' outlines
@@ -309,7 +309,7 @@ def build(scene):
     """Сцена-витрина: рука над шахматной доской, маятник у башни, свет, камера по ключам, формулы. Потом ▶ - и история играет сама."""
     textures, formulas = build_scene(scene)
     missing = [name for name, there in (("textures", textures), ("formula", formulas)) if not there]
-    words = "сцена собрана: ▶ играет историю" + (f"; без плагинов {', '.join(missing)} - без текстур и формул" if missing else "")
+    words = tr("сцена собрана: ▶ играет историю") + (tr("; без плагинов {missing} - без текстур и формул").format(missing=", ".join(missing)) if missing else "")
     show(state=words)
     return {"note": words}
 
