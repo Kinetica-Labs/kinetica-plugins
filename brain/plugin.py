@@ -62,6 +62,7 @@ class Track:
 _training = {"thread": None, "stop": None, "best": None, "body": None, "score": None}
 _live = {}  # body -> (wiring, net, weights, decide every n frames, frames since the run began)
 _driven = {}  # a car of joints held by its stabiliser: chassis -> [JointCar, drive.Stabiliser, (turn, speed)]
+_radio = {}   # a car on a controller of the scene: chassis -> (controller id, rad/s at steer 1, m/s at throttle 1)
 PARADE, PARADE_SECONDS = 20, 120.0  # the training's best shown side by side, and the longest run of theirs watched
 
 
@@ -462,10 +463,27 @@ def referee(scene, dt, bodies):
     return pushes
 
 
+def _radios(scene):
+    """The scene's controllers with `value` actions steer and throttle on one chassis (steer: right positive, as a
+    stick's x; their `speed` the turn rate and the speed at 1): those cars are held by their stabilisers."""
+    for c in scene.ed.scene_list(kind="controller")["objects"]:
+        actions = {w[1]: dict(zip(w[3::2], w[4::2])) for w in (line.split() for line in scene.ed.scene_get(id=c["id"])["text"].splitlines())
+                   if w[:1] == ["action"] and len(w) > 4}
+        steer, throttle = actions.get("steer", {}), actions.get("throttle", {})
+        if steer.get("drive") == "value" and throttle.get("drive") == "value" and steer.get("target") == throttle.get("target"):
+            chassis = int(steer["target"])
+            car = JointCar(scene, chassis)
+            if car.ok():
+                _driven[chassis] = [car, drive.Stabiliser(), (0.0, 0.0)]
+                _radio[chassis] = (c["id"], float(steer.get("speed", 1)), float(throttle.get("speed", 1)))
+
+
 @on_play
 def start(scene):
-    """Each trained brain wired to its robot for the run."""
+    """Each trained brain wired to its robot for the run; each car on a controller to its stabiliser."""
     _live.clear()
+    _radio.clear()
+    _radios(scene)
     for row in scene.ed.component_list(type=TYPE)["components"]:
         v = {"layers": "8", "activation": "tanh", "recurrent": False, "rate_hz": 30.0, "power": 15.0, "weights": "", "echo": False, **row["values"]}
         weights = weights_of(v["weights"])
@@ -498,7 +516,12 @@ def think(scene, dt, sensors):
                 outputs = f["nets"][i].forward(f["genomes"][i], w.numbers(sensors)) if going else [0.0] * w.count
                 commands.update(w.commands(outputs, f["brain"]["power"]))
         return commands
-    for chassis, (car, stabiliser, (turn, speed)) in _driven.items():
+    for chassis, held in _driven.items():
+        if chassis in _radio:  # the controller's receiver: a person's stick, a script, a policy
+            id, turn_at, speed_at = _radio[chassis]
+            values = (sensors.get(id) or {}).get("values", {})
+            held[2] = (-float(values.get("steer", 0.0)) * turn_at, float(values.get("throttle", 0.0)) * speed_at)
+        car, stabiliser, (turn, speed) = held
         commands.update(car.commands(turn, speed, sensors, stabiliser, dt))
     for body, brain in _live.items():
         wiring, net, weights, every, frame, power, car = brain
@@ -527,6 +550,7 @@ def _steer(wiring, sensors, turn, moment):
 def end(scene):
     _live.clear()
     _driven.clear()
+    _radio.clear()
     draw.clear("speed/")
 
 
