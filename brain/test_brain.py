@@ -198,6 +198,9 @@ class JointCarStabiliserTests(unittest.TestCase):
         self.assertAlmostEqual(r_left, -right, places=6)
         self.assertEqual(drive.ackermann(0.0, 1.0, 0.7, 0.55, 0.55), (0.0, 0.0))
         self.assertEqual(drive.ackermann(9.0, 0.5, 0.7, 0.55, 0.55)[0], 0.55)  # held at the knuckle's most
+        back = drive.ackermann(0.4, -0.8, 0.7, 0.55, 0.55)  # backwards, a turn to the left: the wheels as forward to the right
+        self.assertAlmostEqual(back[0], r_left)
+        self.assertAlmostEqual(back[1], r_right)
 
     def test_gyroscope_zero_heard_then_taken_off(self):
         s = drive.Stabiliser()

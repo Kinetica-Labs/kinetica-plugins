@@ -464,8 +464,9 @@ def referee(scene, dt, bodies):
 
 
 def _radios(scene):
-    """The scene's controllers with `value` actions steer and throttle on one chassis (steer: right positive, as a
-    stick's x; their `speed` the turn rate and the speed at 1): those cars are held by their stabilisers."""
+    """The scene's controllers with `value` actions steer and throttle on one chassis (steer: the wheels to the right
+    positive, as a stick's x, backwards too; their `speed` the turn rate and the speed at 1): those cars are held by
+    their stabilisers."""
     for c in scene.ed.scene_list(kind="controller")["objects"]:
         actions = {w[1]: dict(zip(w[3::2], w[4::2])) for w in (line.split() for line in scene.ed.scene_get(id=c["id"])["text"].splitlines())
                    if w[:1] == ["action"] and len(w) > 4}
@@ -520,7 +521,8 @@ def think(scene, dt, sensors):
         if chassis in _radio:  # the controller's receiver: a person's stick, a script, a policy
             id, turn_at, speed_at = _radio[chassis]
             values = (sensors.get(id) or {}).get("values", {})
-            held[2] = (-float(values.get("steer", 0.0)) * turn_at, float(values.get("throttle", 0.0)) * speed_at)
+            speed = float(values.get("throttle", 0.0)) * speed_at  # steer is the wheels' side, as on an RC car: backwards,
+            held[2] = (-float(values.get("steer", 0.0)) * turn_at * (1.0 if speed >= 0 else -1.0), speed)  # the turn reversed
         car, stabiliser, (turn, speed) = held
         commands.update(car.commands(turn, speed, sensors, stabiliser, dt))
     for body, brain in _live.items():

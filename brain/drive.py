@@ -73,8 +73,11 @@ WINDUP = 1.0               # the integral's bound, rad/s
 
 def ackermann(turn, speed, base, track, most):
     """The left and the right front wheels' angles, rad (positive: to the left), for a turn rate `turn` (rad/s, positive
-    to the left) at `speed` (m/s) on a wheelbase `base` and a track `track`, m; each at most `most` rad."""
-    centre = math.atan(base * turn / max(abs(speed), 0.3))
+    to the left) at `speed` (m/s, negative: backwards) on a wheelbase `base` and a track `track`, m; each at most `most`
+    rad. Backwards the same turn takes the wheels the other way (yaw rate = speed · tan(angle) / base) - with the speed's
+    size alone the gyroscope's correction would push the wrong way and spin the car round."""
+    v = speed if abs(speed) >= 0.3 else math.copysign(0.3, speed)  # standing: as if rolling slowly forward
+    centre = math.atan(base * turn / v)
     if abs(centre) < 1e-6:
         return 0.0, 0.0
     radius = base / math.tan(centre)  # signed: positive, the centre on the left
