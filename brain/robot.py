@@ -216,7 +216,7 @@ class JointCar:
             out = {str(j): {"target": 0.0} for j, _ in self.steer}
             out.update(self._wheels(lambda *_: 0.0))
             return out
-        left, right = drive_ackermann(stabiliser.turn(turn, gyro, dt), speed, self.base, self.track, most)
+        left, right = drive_ackermann(stabiliser.turn(turn, gyro, dt, moving=abs(speed) > 0.05), speed, self.base, self.track, most)
         out = {str(j): {"target": round(left if is_left else right, 5)} for j, is_left in self.steer}
         # An electronic differential: each driven wheel at the speed of its own track round the turn - the left (-z) one,
         # inside a left turn, slower - so neither drags the other (a rigid axle's wheels slip and the car runs wide).

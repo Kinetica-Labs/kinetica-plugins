@@ -109,7 +109,13 @@ class Stabiliser:
             self.heard.append(gyro)
             self.zero = sum(self.heard) / len(self.heard)
 
-    def turn(self, asked, gyro, dt):
+    def turn(self, asked, gyro, dt, moving=True):
+        """The turn rate to steer for: the asked one plus the correction of what the gyroscope reads short. A car told
+        to stand gets the asked one alone and forgets its integral: standing, it turns no way the correction could
+        mend, and a wound-up integral would hold its wheels turned to the stop."""
+        if not moving:
+            self.integral = 0.0
+            return asked
         error = asked - (gyro - self.zero)
         self.integral = max(-WINDUP, min(WINDUP, self.integral + RESET * error * dt))
         return asked + GAIN * error + self.integral

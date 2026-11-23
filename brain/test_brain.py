@@ -212,6 +212,11 @@ class JointCarStabiliserTests(unittest.TestCase):
         self.assertAlmostEqual(s.zero, 0.05)
         self.assertAlmostEqual(s.turn(0.4, 0.45, 1 / 60), 0.4, places=6)  # reading 0.45 is truly 0.4: nothing to add
         self.assertGreater(s.turn(0.4, 0.35, 1 / 60), 0.4)  # truly 0.3: it asks for more
+        for _ in range(600):
+            s.turn(0.0, 0.3, 1 / 60)  # a drift it cannot mend: the integral winds up
+        self.assertNotEqual(s.integral, 0.0)
+        self.assertEqual(s.turn(0.0, 0.0, 1 / 60, moving=False), 0.0)  # told to stand: straight wheels, the integral gone
+        self.assertEqual(s.integral, 0.0)
 
 
 class JointCarSensesTests(unittest.TestCase):
