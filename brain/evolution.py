@@ -15,6 +15,7 @@ place, the random numbers are drawn in one thread.
 import argparse
 import atexit
 import json
+import math
 import os
 import sys
 import tempfile
@@ -390,6 +391,29 @@ def courses(brain, count, seed, folder):
             s.ed.scene_save(file=file)
         out.append((file, car))
     return out
+
+
+def clean_share(laps, finished, alpha=0.05):
+    """What an exam says of a lap: the exact (Clopper-Pearson) 1 - alpha interval (low, high) of the share of laps driven
+    clean. The exam drives until `laps` laps or the first error, and a stop at the first error has the same likelihood
+    as «k clean of n», so the binomial bounds hold - in closed form here, no tables: all n clean - low (alpha/2)^(1/n),
+    high 1; k = n - 1 clean, then the error - high (1 - alpha/2)^(1/n), low the p with P(X >= k) = alpha/2, that is
+    n p^(n-1) - (n-1) p^n = alpha/2 (found by halving). 100 of 100 does not say «always»: a lap is clean in 96-100 %.
+    The interval holds if the laps are independent; one net on one track is far from it (the status says so)."""
+    k = int(laps)
+    n = k if finished else k + 1 # the lap the error happened in counts, not clean
+    if n <= 0:
+        return 0.0, 1.0
+    if finished:
+        return (alpha / 2) ** (1 / n), 1.0
+    high = (1 - alpha / 2) ** (1 / n)
+    if k == 0:
+        return 0.0, high
+    lo, hi = 0.0, 1.0 # P(X >= k) = n p^(n-1) - (n-1) p^n grows with p from 0 to 1
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if n * mid ** (n - 1) - (n - 1) * mid ** n < alpha / 2 else (lo, mid)
+    return (lo + hi) / 2, high
 
 
 def exam(scene_file, body, brain, weights, laps=100, judge="track", noise=0):

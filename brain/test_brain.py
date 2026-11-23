@@ -14,6 +14,18 @@ import scenes
 from robot import Wiring
 
 
+class ExamStatisticsTests(unittest.TestCase):
+    def test_clean_share_exact(self):
+        low, high = evolution.clean_share(100, True)
+        self.assertAlmostEqual(low, 0.025 ** (1 / 100), places=12)   # 100 of 100: clean in 96.4-100 %, not «always»
+        self.assertEqual(high, 1.0)
+        low, high = evolution.clean_share(3.4, False)                  # 3 clean laps, the fourth with its error
+        self.assertAlmostEqual(1 - high, 1 - 0.975 ** 0.25, places=9)  # Clopper-Pearson for 1 error in 4: q in [0.0063, 0.806]
+        self.assertAlmostEqual(low, 0.194, places=3)
+        self.assertEqual(evolution.clean_share(0.2, False), (0.0, 0.975))  # the first lap's error
+        self.assertEqual(evolution.clean_share(0, True), (0.0, 1.0))
+
+
 class NetTests(unittest.TestCase):
     def test_forward_by_hand(self):
         net = network.Net(2, [1], 1)  # x -> h = tanh(w1 x1 + w2 x2 + b1) -> y = tanh(w3 h + b2)

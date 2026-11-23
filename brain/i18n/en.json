@@ -112,5 +112,6 @@
   "экзамен: {made:.1f} круга до первой ошибки ({s:.0f} с мира)": "exam: {made:.1f} laps before the first error ({s:.0f} s of world time)",
   "эхо: {name}": "echo: {name}",
   "эхо: поворот": "echo: turn",
-  "эхо: скорость": "echo: speed"
+  "эхо: скорость": "echo: speed",
+  " · чистый круг: {low:.0%}–{high:.0%} (95 %, если круги независимы)": " · a clean lap: {low:.0%}–{high:.0%} (95 %, if the laps are independent)"
 }

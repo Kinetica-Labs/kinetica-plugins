@@ -253,8 +253,10 @@ def exam(scene, laps: int = field(100, range=(1, 10000), label="Кругов")):
     def run():
         try:
             made, seconds, finished = evolution.exam(file, body, brain, brain["weights"], laps, brain.get("judge", "track"))
+            low, high = evolution.clean_share(laps if finished else made, finished)
             show(status=(tr("экзамен сдан: {laps} кругов без ошибки за {s:.0f} с мира").format(laps=laps, s=seconds) if finished
-                         else tr("экзамен: {made:.1f} круга до первой ошибки ({s:.0f} с мира)").format(made=made, s=seconds)))
+                         else tr("экзамен: {made:.1f} круга до первой ошибки ({s:.0f} с мира)").format(made=made, s=seconds))
+                 + tr(" · чистый круг: {low:.0%}–{high:.0%} (95 %, если круги независимы)").format(low=low, high=high))
         except Exception as e:
             show(status=tr("экзамен прерван: {e}").format(e=e))
         finally:
