@@ -210,5 +210,30 @@ class JointCarStabiliserTests(unittest.TestCase):
         self.assertAlmostEqual(s.turn(0.4, 0.45, 1 / 60), 0.4, places=6)  # reading 0.45 is truly 0.4: nothing to add
         self.assertGreater(s.turn(0.4, 0.35, 1 / 60), 0.4)  # truly 0.3: it asks for more
 
+
+class JointCarSensesTests(unittest.TestCase):
+    """The sports car of joints on the race's track (scenes.joint_car, scenes.race joints=True): the trained brain's senses
+    in its order - the lidar's 21 rays, then the IMU's 6 - and its stabiliser's geometry in the chassis' own frame,
+    however the car stands turned."""
+
+    def test_the_same_inputs_as_the_trained_car(self):
+        ke = evolution._kinetica()
+        with ke.Scene() as block, ke.Scene() as joints, tempfile.TemporaryDirectory() as folder:
+            a = Wiring(block, scenes.race(block, folder=folder))
+            b = Wiring(joints, scenes.race(joints, folder=folder, joints=True))
+            self.assertEqual(b.size, 27)
+            self.assertEqual(b.names(), a.names())
+            self.assertEqual([spec for *_, spec in b.inputs], [spec for *_, spec in a.inputs])
+
+    def test_geometry_in_the_chassis_frame(self):
+        from robot import JointCar
+        for heading in (0.0, 30.0, -120.0):
+            with evolution._kinetica().Scene() as s:
+                car = JointCar(s, scenes.joint_car(s, (1.0, 2.0), heading))
+                self.assertTrue(car.ok())
+                self.assertAlmostEqual(car.base, 0.7, places=3)
+                self.assertAlmostEqual(car.track, 0.55, places=3)
+                self.assertEqual(sorted(left for _, left in car.steer), [False, True])
+
 if __name__ == "__main__":
     unittest.main()

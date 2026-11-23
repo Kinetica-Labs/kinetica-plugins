@@ -147,12 +147,12 @@ def tightest(line):
     return out
 
 
-def race(scene, points=CIRCUIT, width=1.8, folder=None):
+def race(scene, points=CIRCUIT, width=1.8, folder=None, joints=False):
     """A closed track - its middle line a spline through `points`, two walls `width` apart along it, one static body of
     triangles («Трасса», a mesh collider), the line kept in its «brain.track» (what the judge measures the way along) -
     and a car at its start: a block with a lidar on its roof - a fan of 21 rays over 200 degrees ahead - and an IMU - its
-    brain steers it and its drive (drive.py) does the rest: tyres, motor, steering by the IMU's gyroscope. Returns the
-    car's id."""
+    brain steers it and its drive (drive.py) does the rest: tyres, motor, steering by the IMU's gyroscope; with `joints`
+    the sports car of joints instead (joint_car). Returns the car's (its chassis') id."""
     ed = scene.ed
     line = spline(points)
     vertices, triangles = walls(line, width)
@@ -164,13 +164,17 @@ def race(scene, points=CIRCUIT, width=1.8, folder=None):
     ed.scene_set(id=floor, line="shape", key="position", values=[middle[0], 0.01, middle[2]])
     ed.world_set(line="world", key="size", values=[extent[0] + 6, 3, extent[2] + 6])
     ed.world_set(line="world", key="duration", values=[0])
-    ed.world_set(line="physics", key="substeps", values=[4])  # blocks sliding on a floor: 4 a frame are plenty, 32 a waste
+    # blocks sliding on a floor: 4 a frame are plenty, 32 a waste; a car of joints - grams of knuckle on kilograms of chassis -
+    # needs the 32 its joints are solved in (with 4 its chain is torn apart and it tumbles)
+    ed.world_set(line="physics", key="substeps", values=[32 if joints else 4])
     word = lambda v: " ".join(f"{x:.4f}" for x in v)
     track = ed.scene_put(block=f'entity "Трасса"\n  object id 0 visible 1 locked 1\n'
                                f'  shape mesh file "{_model(vertices, triangles, folder)}" size {word(extent)} position {word(middle)} rotation 0 0 0 color 0.8 0.35 0.25\n'
                                f'  collider kind mesh fit 1 size 0.2 0.2 0.2 offset 0 0 0 rotation 0 0 0\nend')["id"]
     ed.component_set(id=track, type="brain.track", values={"points": [round(v, 3) for p in line for v in p], "width": width})
     start, ahead = line[0], line[1]
+    if joints:  # the sports car of joints instead of the block: the same senses on its roof, its own wheels
+        return joint_car(scene, start, _heading(start, ahead))
     car = ed.scene_add(shape="box", name="Машинка", position=[start[0], 0.1, start[1]], size=[0.5, 0.2, 0.3], role="rigid")["id"]
     ed.scene_set(id=car, line="rigid", key="mass", values=[1])
     ed.scene_set(id=car, line="rigid", key="friction", values=[0.2])
@@ -182,3 +186,49 @@ def race(scene, points=CIRCUIT, width=1.8, folder=None):
     ed.assembly_sensor(target=car, kind="imu", face="+y")
     ed.scene_turn(ids=[car], axis="y", degrees=_heading(start, ahead))
     return car
+
+
+def joint_car(scene, at=(0.0, 0.0), heading=0.0):
+    """A sports car of joints at `at` (x, z) facing `heading` degrees about the up (0: +x), for a brain: a low chassis, a
+    cabin; each corner a hub on a shock absorber (the springs share the chassis), the front wheels on knuckles that a
+    servo turns (robot.JointCar's steering), the rear ones on velocity motors (its drive) - and the race car's senses on
+    the cabin's roof: the lidar of 21 rays over 200 degrees, then the IMU flat (the order the trained brain reads them in,
+    27 numbers). Returns the chassis' id."""
+    ed = scene.ed
+    x0, z0, y = float(at[0]), float(at[1]), 0.3
+    made = []
+
+    def box(name, p, size):
+        id = ed.scene_add(shape="box", name=name, position=[x0 + p[0], y + p[1], z0 + p[2]], size=list(size), role="rigid")["id"]
+        made.append(id)
+        return id
+
+    chassis = box("Шасси", (0, 0, 0), (1.0, 0.05, 0.4))
+    ed.scene_set(id=chassis, line="rigid", key="density", values=[250])
+    cabin = box("Кабина", (-0.08, 0.075, 0), (0.4, 0.1, 0.3))
+    ed.assembly_joint(a=cabin, b=chassis, type="weld", anchor=[x0 - 0.08, y + 0.075, z0])
+    base, track = 0.7, 0.59
+    for x in (base / 2, -base / 2):
+        for side in (1, -1):
+            hub = box("Ступица", (x, 0, side * 0.23), (0.06, 0.06, 0.06))
+            ed.assembly_joint(a=hub, b=chassis, type="shock", anchor=[x0 + x, y, z0 + side * 0.2], axis=[0, 1, 0])
+            carrier = hub
+            if x > 0:
+                carrier = box("Кулак", (x, 0, side * 0.275), (0.04, 0.04, 0.03))
+                king = ed.assembly_joint(a=carrier, b=hub, type="hinge", anchor=[x0 + x, y, z0 + side * 0.26], axis=[0, 1, 0])["id"]
+                ed.assembly_drive(joint=king, kind="servo", stiffness=40, damping=2, target=0)
+            wheel = ed.scene_add(shape="cylinder", name="Колесо", position=[x0 + x, y, z0 + side * 0.32], size=[0.2, 0.06, 0.2], role="rigid")["id"]
+            made.append(wheel)
+            ed.scene_turn(ids=[wheel], axis="x", degrees=90)
+            axle = ed.assembly_joint(a=wheel, b=carrier, type="hinge", anchor=[x0 + x, y, z0 + side * 0.29], axis=[0, 0, 1])["id"]
+            if x < 0:
+                ed.assembly_drive(joint=axle, kind="velocity", velocity=-1, force=4)  # its sign: forward (robot.JointCar)
+    lidar = ed.assembly_sensor(target=chassis, kind="lidar", face="+y", model="TFmini-S")["id"]
+    ed.sensor_spec(sensor=lidar, spec={"rays_h": 21, "fov_h_deg": 200, "max_m": 8, "rate_hz": 30})
+    # over the cabin's roof, looking ahead (the race car's: its 10 cm it cannot see stay over the car), level
+    ed.scene_set(id=lidar, line="pose", key="position", values=[0, 0.145, 0])
+    ed.scene_set(id=lidar, line="pose", key="rotation", values=[-90, 0, 0])  # as the race car's on its nose: the fan level
+    ed.assembly_sensor(target=chassis, kind="imu", face="+y")
+    if heading:
+        ed.scene_turn(ids=made, axis="y", degrees=heading, pivot=[x0, y, z0])
+    return chassis

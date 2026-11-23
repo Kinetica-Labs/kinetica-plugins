@@ -7,6 +7,7 @@ no window."""
 import math
 
 from drive import ackermann as drive_ackermann
+from drive import axes as drive_axes
 from network import tr
 
 SENSOR_KINDS = ("encoder", "imu", "sonar", "touch", "wrench", "effort", "stereo", "lidar")
@@ -161,7 +162,9 @@ class JointCar:
         world = world or read_world(scene)
         self.wiring = Wiring(scene, body, world)
         self.body = int(body)
-        chassis = _position(scene, self.body)
+        chassis, rotation = _position(scene, self.body), _rotation(scene, self.body)
+        ahead, aside = drive_axes(rotation)  # the chassis' own x and z: the car may stand turned
+        local = lambda p: [sum((p[k] - chassis[k]) * axis[k] for k in range(3)) for axis in (ahead, (0.0, 1.0, 0.0), aside)]
         self.steer, self.driven = [], []  # (joint, left?), (joint, sign, radius, sideways: its z from the chassis' middle)
         knuckles, wheels = [], []
         for jid in self.wiring.joints:
@@ -170,15 +173,15 @@ class JointCar:
             if not drive:
                 continue
             a = world["links"][jid][0]
-            at = _position(scene, a)
+            at = local(_position(scene, a))
             stiffness, velocity = float(_after(drive, "stiffness", 0)), float(_after(drive, "velocity", 0))
             if stiffness > 0:
-                self.steer.append((jid, at[2] < chassis[2]))
+                self.steer.append((jid, at[2] < 0))
                 knuckles.append(at)
             elif velocity != 0:
                 size = next(w for w in scene.ed.scene_get(id=a)["lines"] if w and w[0] == "shape")
                 radius = float(size[size.index("size") + 1]) / 2
-                self.driven.append((jid, -1.0 if velocity < 0 else 1.0, radius, at[2] - chassis[2]))
+                self.driven.append((jid, -1.0 if velocity < 0 else 1.0, radius, at[2]))
                 wheels.append(at)
         mean = lambda points, k: sum(p[k] for p in points) / len(points) if points else 0.0
         self.base = max(0.05, mean(knuckles, 0) - mean(wheels, 0)) if knuckles and wheels else 0.5
@@ -208,6 +211,12 @@ class JointCar:
 def _position(scene, id):
     shape = next(w for w in scene.ed.scene_get(id=id)["lines"] if w and w[0] == "shape")
     at = shape.index("position") + 1
+    return [float(shape[at + k]) for k in range(3)]
+
+
+def _rotation(scene, id):
+    shape = next(w for w in scene.ed.scene_get(id=id)["lines"] if w and w[0] == "shape")
+    at = shape.index("rotation") + 1
     return [float(shape[at + k]) for k in range(3)]
 
 
