@@ -59,3 +59,54 @@ def plan(outputs, card, away=0.0):
 def inertia(mass, size):
     """A block's moment about its up: m (x^2 + z^2) / 12."""
     return float(mass) * (size[0] ** 2 + size[2] ** 2) / 12.0
+
+
+# --- A car of joints (robot.JointCar): its own wheels, knuckles and springs, the physics' tyres ---------------------------
+# The planner's two numbers held by a stabiliser under it: the speed by the driven wheels' motors (v / r, each wheel at its
+# own track's speed round the turn - an electronic differential), the turn rate
+# by the knuckles' servos - the kinematic angle of a bicycle, atan(L w / v), corrected by a PI loop on the IMU's
+# gyroscope (the tyres slip, the knuckles lag: what the angle alone gives is short of the turn asked), and split by
+# Ackermann - each front wheel square to its line to the turn's centre, the inner one turned more.
+GAIN, RESET = 0.8, 1.5     # the gyroscope loop: the proportional part, and the integral's rate, 1/s
+WINDUP = 1.0               # the integral's bound, rad/s
+
+
+def ackermann(turn, speed, base, track, most):
+    """The left and the right front wheels' angles, rad (positive: to the left), for a turn rate `turn` (rad/s, positive
+    to the left) at `speed` (m/s) on a wheelbase `base` and a track `track`, m; each at most `most` rad."""
+    centre = math.atan(base * turn / max(abs(speed), 0.3))
+    if abs(centre) < 1e-6:
+        return 0.0, 0.0
+    radius = base / math.tan(centre)  # signed: positive, the centre on the left
+    s = 1.0 if radius > 0 else -1.0  # atan2 keeps the turn's side even where the centre is inside the track
+    left, right = s * math.atan2(base, s * (radius - track / 2)), s * math.atan2(base, s * (radius + track / 2))
+    clamp = lambda a: max(-most, min(most, a))
+    return clamp(left), clamp(right)
+
+
+class Stabiliser:
+    """The turn rate held by the gyroscope: the asked turn plus a PI correction of what it reads short. A gyroscope reads a
+    turn where there is none (an MPU-6050's zero is off by up to 20 °/s by its datasheet), so first it stands still - half
+    a second to stop and straighten, half a second to hear its zero - and takes that zero off every reading after, as a
+    robot does at its start (`calibrating` while it does)."""
+
+    SETTLE, LISTEN = 0.5, 0.5  # s
+
+    def __init__(self):
+        self.integral, self.clock, self.zero, self.heard = 0.0, 0.0, 0.0, []
+
+    @property
+    def calibrating(self):
+        return self.clock < self.SETTLE + self.LISTEN
+
+    def hear(self, gyro, dt):
+        """One frame of the start: the gyroscope's reading while the car stands; its mean is the zero."""
+        self.clock += dt
+        if self.clock > self.SETTLE:
+            self.heard.append(gyro)
+            self.zero = sum(self.heard) / len(self.heard)
+
+    def turn(self, asked, gyro, dt):
+        error = asked - (gyro - self.zero)
+        self.integral = max(-WINDUP, min(WINDUP, self.integral + RESET * error * dt))
+        return asked + GAIN * error + self.integral

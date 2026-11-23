@@ -6,6 +6,7 @@ physics never reaches a brain. Only the standard library; the scene is a kinetic
 no window."""
 import math
 
+from drive import ackermann as drive_ackermann
 from network import tr
 
 SENSOR_KINDS = ("encoder", "imu", "sonar", "touch", "wrench", "effort", "stereo", "lidar")
@@ -147,3 +148,68 @@ class Wiring:
             ins.append(f"{name} ({n})" if n > 1 else name)
         outs = tr("поворот и скорость (привод машины)") if self.car else ", ".join(n for _, n in self.outputs) or tr("нет")
         return tr("{n} входов: {ins}; {m} выходов: {outs}").format(n=self.size, ins=", ".join(ins) or tr("нет"), m=self.count, outs=outs)
+
+
+class JointCar:
+    """A car of joints as its stabiliser sees it (drive.ackermann, drive.Stabiliser): on the robot of `body` (its chassis),
+    the knuckles - hinges whose turn a servo holds (stiffness > 0) - and the driven wheels - hinges with a velocity motor;
+    the wheelbase from the knuckles back to the driven wheels, the track between the knuckles, a wheel's radius from its
+    size; left is -z of the chassis as it was made (forward +x). A driven wheel turns forward the way it was made to turn
+    (its motor's sign as authored). The gyroscope: the robot's IMU, flat on the chassis (its z up)."""
+
+    def __init__(self, scene, body, world=None):
+        world = world or read_world(scene)
+        self.wiring = Wiring(scene, body, world)
+        self.body = int(body)
+        chassis = _position(scene, self.body)
+        self.steer, self.driven = [], []  # (joint, left?), (joint, sign, radius, sideways: its z from the chassis' middle)
+        knuckles, wheels = [], []
+        for jid in self.wiring.joints:
+            lines = _lines(scene, jid)
+            drive = next((w for w in lines if w and w[0] == "drive" and len(w) > 1 and w[1] == "rx"), None)
+            if not drive:
+                continue
+            a = world["links"][jid][0]
+            at = _position(scene, a)
+            stiffness, velocity = float(_after(drive, "stiffness", 0)), float(_after(drive, "velocity", 0))
+            if stiffness > 0:
+                self.steer.append((jid, at[2] < chassis[2]))
+                knuckles.append(at)
+            elif velocity != 0:
+                size = next(w for w in scene.ed.scene_get(id=a)["lines"] if w and w[0] == "shape")
+                radius = float(size[size.index("size") + 1]) / 2
+                self.driven.append((jid, -1.0 if velocity < 0 else 1.0, radius, at[2] - chassis[2]))
+                wheels.append(at)
+        mean = lambda points, k: sum(p[k] for p in points) / len(points) if points else 0.0
+        self.base = max(0.05, mean(knuckles, 0) - mean(wheels, 0)) if knuckles and wheels else 0.5
+        self.track = max(p[2] for p in knuckles) - min(p[2] for p in knuckles) if len(knuckles) > 1 else 0.0
+        self.gyro = self.wiring.gyro
+
+    def ok(self):
+        return bool(self.steer and self.driven and self.gyro)
+
+    def commands(self, turn, speed, readings, stabiliser, dt, most=0.55):
+        """The joints' commands for this frame: the knuckles' angles and the driven wheels' turn rates."""
+        gyro = float(((readings.get(self.gyro) or {}).get("gyro") or [0.0, 0.0, 0.0])[2])
+        if stabiliser.calibrating: # it stands, wheels held, knuckles straight, while it hears its gyroscope's zero
+            stabiliser.hear(gyro, dt)
+            turn = speed = 0.0
+            out = {str(j): {"target": 0.0} for j, _ in self.steer}
+            out.update({str(j): {"velocity": 0.0} for j, *_ in self.driven})
+            return out
+        left, right = drive_ackermann(stabiliser.turn(turn, gyro, dt), speed, self.base, self.track, most)
+        out = {str(j): {"target": round(left if is_left else right, 5)} for j, is_left in self.steer}
+        # An electronic differential: each driven wheel at the speed of its own track round the turn - the left (-z) one,
+        # inside a left turn, slower - so neither drags the other (a rigid axle's wheels slip and the car runs wide).
+        out.update({str(j): {"velocity": round(sign * (speed + turn * z) / radius, 5)} for j, sign, radius, z in self.driven})
+        return out
+
+
+def _position(scene, id):
+    shape = next(w for w in scene.ed.scene_get(id=id)["lines"] if w and w[0] == "shape")
+    at = shape.index("position") + 1
+    return [float(shape[at + k]) for k in range(3)]
+
+
+def _after(words, key, default):
+    return words[words.index(key) + 1] if key in words else default

@@ -27,7 +27,7 @@ import evolution
 import network
 import scenes
 from network import hidden_of, weights_of, weights_text
-from robot import Wiring, read_world
+from robot import JointCar, Wiring, read_world
 
 TYPE = "brain.net"
 
@@ -61,6 +61,7 @@ class Track:
 
 _training = {"thread": None, "stop": None, "best": None, "body": None, "score": None}
 _live = {}  # body -> (wiring, net, weights, decide every n frames, frames since the run began)
+_driven = {}  # a car of joints held by its stabiliser: chassis -> [JointCar, drive.Stabiliser, (turn, speed)]
 PARADE, PARADE_SECONDS = 20, 120.0  # the training's best shown side by side, and the longest run of theirs watched
 
 
@@ -265,6 +266,22 @@ def exam(scene, laps: int = field(100, range=(1, 10000), label="Кругов")):
     threading.Thread(target=run, name="brain-exam", daemon=True).start()
     show(status=tr("экзамен: {laps} кругов, идёт без окна…").format(laps=laps))
     return {"body": body, "laps": laps}
+
+
+@command(label="Вести машинку")
+def car_drive(scene, body=field(ref="body", label="Шасси"), turn: float = field(0.0, unit="рад/с", range=(-4.0, 4.0), label="Поворот"),
+              speed: float = field(1.0, unit="м/с", range=(-3.0, 8.0), label="Скорость")):
+    """A car of joints driven by hand in Play: its stabiliser holds this turn rate (positive: to the left) by the knuckles
+    and the gyroscope, and this speed by the driven wheels - the layer a brain's plan will stand on."""
+    chassis = int(getattr(body, "id", body))
+    if chassis not in _driven:
+        car = JointCar(scene, chassis)
+        if not car.ok():
+            return {"error": tr("нет руля, ведущих колёс или IMU: шарниры кулаков с серво, оси с мотором скорости, IMU на шасси")}
+        _driven[chassis] = [car, drive.Stabiliser(), (0.0, 0.0)]
+    _driven[chassis][2] = (float(turn), float(speed))
+    car = _driven[chassis][0]
+    return {"steer": len(car.steer), "driven": len(car.driven), "base": round(car.base, 3), "track": round(car.track, 3)}
 
 
 @command(label="Пример: балансир")
@@ -481,6 +498,8 @@ def think(scene, dt, sensors):
                 outputs = f["nets"][i].forward(f["genomes"][i], w.numbers(sensors)) if going else [0.0] * w.count
                 commands.update(w.commands(outputs, f["brain"]["power"]))
         return commands
+    for chassis, (car, stabiliser, (turn, speed)) in _driven.items():
+        commands.update(car.commands(turn, speed, sensors, stabiliser, dt))
     for body, brain in _live.items():
         wiring, net, weights, every, frame, power, car = brain
         if frame % every == 0:
@@ -507,6 +526,7 @@ def _steer(wiring, sensors, turn, moment):
 @on_stop
 def end(scene):
     _live.clear()
+    _driven.clear()
     draw.clear("speed/")
 
 

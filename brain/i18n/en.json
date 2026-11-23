@@ -113,5 +113,10 @@
   "эхо: {name}": "echo: {name}",
   "эхо: поворот": "echo: turn",
   "эхо: скорость": "echo: speed",
-  " · чистый круг: {low:.0%}–{high:.0%} (95 %, если круги независимы)": " · a clean lap: {low:.0%}–{high:.0%} (95 %, if the laps are independent)"
+  " · чистый круг: {low:.0%}–{high:.0%} (95 %, если круги независимы)": " · a clean lap: {low:.0%}–{high:.0%} (95 %, if the laps are independent)",
+  "Вести машинку": "Drive the car",
+  "Шасси": "Chassis",
+  "Поворот": "Turn",
+  "Скорость": "Speed",
+  "нет руля, ведущих колёс или IMU: шарниры кулаков с серво, оси с мотором скорости, IMU на шасси": "no steering, driven wheels or IMU: knuckle hinges with a servo, axles with a velocity motor, an IMU on the chassis"
 }

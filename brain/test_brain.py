@@ -184,5 +184,31 @@ class DriveTests(unittest.TestCase):
         self.assertEqual(drive.plan([0.5, -1.0], dict(card, reflex=6.0), 0.5)[0], 3.0)  # no more than the steering gives
 
 
+
+class JointCarStabiliserTests(unittest.TestCase):
+    """The layer under a brain on a car of joints (drive.ackermann, drive.Stabiliser): the front wheels' angles of a turn
+    and the gyroscope loop with its zero heard at the start."""
+
+    def test_ackermann_inner_wheel_turns_more(self):
+        left, right = drive.ackermann(0.4, 0.8, 0.7, 0.55, 0.55)  # a 2 m circle to the left
+        self.assertGreater(left, right)
+        self.assertAlmostEqual(math.tan(left), 0.7 / (2.0 - 0.275), places=3)
+        self.assertAlmostEqual(math.tan(right), 0.7 / (2.0 + 0.275), places=3)
+        r_left, r_right = drive.ackermann(-0.4, 0.8, 0.7, 0.55, 0.55)  # to the right: the mirror
+        self.assertAlmostEqual(r_left, -right, places=6)
+        self.assertEqual(drive.ackermann(0.0, 1.0, 0.7, 0.55, 0.55), (0.0, 0.0))
+        self.assertEqual(drive.ackermann(9.0, 0.5, 0.7, 0.55, 0.55)[0], 0.55)  # held at the knuckle's most
+
+    def test_gyroscope_zero_heard_then_taken_off(self):
+        s = drive.Stabiliser()
+        frames = 0
+        while s.calibrating:
+            s.hear(0.05, 1 / 60)  # a gyroscope off by 0.05 rad/s, standing
+            frames += 1
+        self.assertEqual(frames, 60)
+        self.assertAlmostEqual(s.zero, 0.05)
+        self.assertAlmostEqual(s.turn(0.4, 0.45, 1 / 60), 0.4, places=6)  # reading 0.45 is truly 0.4: nothing to add
+        self.assertGreater(s.turn(0.4, 0.35, 1 / 60), 0.4)  # truly 0.3: it asks for more
+
 if __name__ == "__main__":
     unittest.main()
