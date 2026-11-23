@@ -78,13 +78,17 @@ def imu_connect(scene, port: str = field("", label="Порт", help="пусто 
     if not path:
         raise RuntimeError(tr("плата BNO086 не найдена: подключите её по USB или впишите порт"))
     board = bno086.Board(path, _sample)
-    device = board.text(bno086.GET_DEVICE_NAME)
-    taken = [r for r in (ORIENTATION[orientation], 0x01, 0x02) if board.feature(r, rate)]
-    if not taken:
+    try:  # the port is open: whatever fails before the board is kept closes it
+        device = board.text(bno086.GET_DEVICE_NAME)
+        taken = [r for r in (ORIENTATION[orientation], 0x01, 0x02) if board.feature(r, rate)]
+        if not taken:
+            raise RuntimeError(tr("{path}: плата не отвечает на команды").format(path=path) + ("" if device else tr(" (это точно BNO086?)")))
+        serial = board.text(bno086.GET_SERIAL)
+    except BaseException:
         board.close()
-        raise RuntimeError(tr("{path}: плата не отвечает на команды").format(path=path) + ("" if device else tr(" (это точно BNO086?)")))
+        raise
     with _lock:
-        _imu.update(board=board, port=os.path.realpath(path), device=f"{device} {board.text(bno086.GET_SERIAL)}".strip(), streams={}, taken=taken)
+        _imu.update(board=board, port=os.path.realpath(path), device=f"{device} {serial}".strip(), streams={}, taken=taken)
     threading.Thread(target=_chart, args=(board,), name="depz-chart", daemon=True).start()
     show(status=tr("{device} на {port}: жду отсчётов…").format(device=_imu["device"], port=_imu["port"]))
     return {"port": _imu["port"], "device": _imu["device"], "streams": len(taken)}
