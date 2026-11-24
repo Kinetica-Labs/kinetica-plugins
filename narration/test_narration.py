@@ -25,12 +25,15 @@ class Narration(unittest.TestCase):
         text, _, _ = plugin.frame(born + 10)
         self.assertEqual(text, "Ставлю шасси")
 
-    def test_the_plate_keeps_three_lines_and_wraps(self):
+    def test_the_plate_keeps_whole_phrases(self):
         for k in range(5):
             plugin.say(None, f"шаг {k}", target=0)
-        self.assertEqual([line for line, _ in plugin._said], ["шаг 2", "шаг 3", "шаг 4"])
-        plugin.say(None, "слово " * 30, target=0)
-        self.assertTrue(all(len(line) <= plugin.WIDE for line, _ in plugin._said))
+        self.assertEqual([phrase for phrase, _ in plugin._said], ["шаг 2", "шаг 3", "шаг 4"])
+        plugin.say(None, "слово " * 20, target=0)  # three lines wrapped: one short phrase above it fits, not two
+        text, _, _ = plugin.frame(time.monotonic() + 60)
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "шаг 4")
+        self.assertTrue(len(lines) <= plugin.MOST and all(len(line) <= plugin.WIDE for line in lines))
         self.assertEqual(plugin.say(None, "   ", target=0)["said"], False)
 
     def test_the_light_passes_to_the_next_part(self):

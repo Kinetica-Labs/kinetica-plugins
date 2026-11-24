@@ -321,9 +321,15 @@ def redraw(scene):
 
 def _put(scene, kind, latex, target=0):
     """The component on the shape `target` (an id; 0: every selected one); with none, on a small hidden shape of its own."""
+    if target and int(target) not in [o.id for o in scene.objects]:
+        raise ValueError(tr("нет объекта {id} в сцене").format(id=int(target)))
     shapes = [scene.objects[int(target)]] if target else [o for o in scene.editor.selection if o.kind == "entity"]
-    if any(o.kind != "entity" for o in shapes):  # a battery, a joint: no place in space to point at or hang from
-        raise ValueError(tr("формула - у фигуры: «{name}» не фигура").format(name=next(o.name for o in shapes if o.kind != "entity")))
+    point = None
+    if target and shapes[0].kind == "joint":  # a joint: on its moving body, the leader to the joint's axis there (τ of a servo)
+        link = next(line for line in scene.ed.scene_get(id=int(target))["lines"] if line[0] == "link")
+        shapes, point = [scene.objects[int(link[link.index("a") + 1])]], [float(v) for v in link[link.index("anchor_a") + 1:link.index("anchor_a") + 4]]
+    if any(o.kind != "entity" for o in shapes):  # a battery: no place in space to point at or hang from
+        raise ValueError(tr("формула - у фигуры или сустава: «{name}» - ни то ни другое").format(name=next(o.name for o in shapes if o.kind != "entity")))
     if not shapes:
         holder = scene.add("box", name=f"{kind._kinetica['label']} {1 + sum(1 for _ in kind.instances(scene))}", position=(0.0, 1.0, 0.0),
                            size=(0.05, 0.05, 0.05))
@@ -337,7 +343,7 @@ def _put(scene, kind, latex, target=0):
             n = sum(1 for _ in Callout.instances(scene))
             side, row = (1 if n % 2 == 0 else -1), (n // 2) % 2
             values["offset"] = [side * (shape.size[0] / 2 + 0.45), shape.size[1] / 2 + 0.3 + 0.35 * row, 0.0]
-            values["point"] = [0.0, shape.size[1] / 2, 0.0]
+            values["point"] = point or [0.0, shape.size[1] / 2, 0.0]
         elif kind is not Screen and shape.visible:  # over the shape, or on its top
             values["offset"] = [0.0, shape.size[1] / 2 + (0.25 if kind is Label else 0.02), 0.0]
         scene.ed.component_set(id=shape.id, type=type, values=values)
@@ -372,9 +378,9 @@ def screen(scene, latex: str = _LATEX):
 
 
 @command(label="Выноска")
-def callout(scene, latex: str = _LATEX, target: int = field(0, range=(0, 10**9), label="Фигура", help="Её id; 0 - выделенные")):
-    """Формула в стороне от фигуры и линия-выноска к ней, как на чертеже: агент подписывает то, что строит; точку на
-    детали потом тянут оранжевой ручкой, конец выноски - точка, стрелка или нет."""
+def callout(scene, latex: str = _LATEX, target: int = field(0, range=(0, 10**9), label="Фигура", help="Её id или сустава; 0 - выделенные")):
+    """Формула в стороне от фигуры и линия-выноска к ней, как на чертеже: агент подписывает то, что строит; у сустава -
+    на его звене, линия к оси. Точку на детали потом тянут оранжевой ручкой, конец выноски - точка, стрелка или нет."""
     return _put(scene, Callout, latex, target)
 
 

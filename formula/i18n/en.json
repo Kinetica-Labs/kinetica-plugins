@@ -53,13 +53,14 @@
   "стрелка": "arrow",
   "нет": "none",
   "Фигура": "Shape",
-  "Её id; 0 - выделенные": "Its id; 0 - the selected ones",
-  "формула - у фигуры: «{name}» не фигура": "a formula is a shape's: «{name}» is no shape",
   "встроенный набор формул не понял «{latex}»: {why}": "the built-in typesetter could not read «{latex}»: {why}",
   "Раскладка": "Layout",
   "сама": "automatic",
   "вручную": "by hand",
   "Сама - в колонки слева и справа от деталей, по порядку их точек: выноски не пересекаются при любом виде; вручную - по «Где надпись»": "Automatic: in columns left and right of the parts, in their points' order - leaders never cross from any view; by hand: at «Where the words stand»",
   "Раскладка вручную: от фигуры по осям мира": "Layout by hand: from the shape along the world's axes",
-  "Высота буквы в долях высоты вида: крупно - видео смотрят с телефона": "A letter's height as a share of the view's: large - videos are watched on phones"
+  "Высота буквы в долях высоты вида: крупно - видео смотрят с телефона": "A letter's height as a share of the view's: large - videos are watched on phones",
+  "формула - у фигуры или сустава: «{name}» - ни то ни другое": "a formula belongs to a shape or a joint: «{name}» is neither",
+  "Её id или сустава; 0 - выделенные": "Its id, or a joint's; 0 - the selected ones",
+  "нет объекта {id} в сцене": "no object {id} in the scene"
 }

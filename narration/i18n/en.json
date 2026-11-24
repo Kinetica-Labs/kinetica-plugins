@@ -5,5 +5,9 @@
   "Одна короткая фраза для зрителя: что и зачем": "One short sentence for the viewer: what and why",
   "Деталь": "Part",
   "Номер объекта, о котором строка: он светится, пока строка последняя (0 - никакой)": "The object the line is about: it glows while the line is the newest (0 - none)",
-  "Убрать рассказ": "Clear the narration"
+  "Убрать рассказ": "Clear the narration",
+  "Камера ведёт": "The camera directs",
+  "Вести камеру": "Direct the camera",
+  "Строка о детали подводит к ней камеру и облетает её; щелчок в виде отдаёт камеру вам": "A line about a part brings the camera to it and circles it; a click in the view gives the camera back to you",
+  "Свет для съёмки": "Light for filming"
 }
