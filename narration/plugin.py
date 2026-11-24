@@ -11,7 +11,7 @@ formula (the «Формулы» plugin's callouts). `narration_clear` takes it a
 The camera directs itself, as a film of a thing being made is shot: each card with a part flies the view to it - eased,
 1.6 s, a three-quarter view from a little above, each shot from a new side - and then circles it slowly, a turntable
 (view_look glide and orbit: the editor moves the camera, one call a shot); a card about nothing pulls back to the whole.
-While the scene runs the view is the run's (a chase camera follows a car); a press in the view gives it to the person.
+While the view follows a body (a chase camera behind a car) it is left alone; a press in the view gives it to the person.
 `narration_camera {on}` switches the directing off and on. «Свет для съёмки» (`narration_stage`) lights the scene as a
 studio does: a warm key and a cool rim from behind, both with shadows, a faint fill, the floor dark.
 """
@@ -20,7 +20,7 @@ import textwrap
 import threading
 import time
 
-from kinetica.plugin import command, draw, field, on_play, on_stop, tr
+from kinetica.plugin import command, draw, field, tr
 
 WIDE, TYPE = 52, 45.0        # letters a line; letters a second - quick enough to keep up, slow enough to be read as typed
 SLIDE, IN, WORDS_AT = 0.35, 0.03, 0.2  # the card slides in over SLIDE s from IN of the view's width to the left; words from WORDS_AT s
@@ -31,7 +31,7 @@ PLACE, SIZE = (0.03, 0.95), 19
 GLIDE, ORBIT, LIFT, TURN = 1.6, 6.0, 22.0, 35.0  # a shot: s to fly, °/s to circle, ° from above, ° to the next side
 
 _card = {}                   # the card now: text, title, step, born
-_camera = {"on": True, "playing": False, "shot": 0, "last": None}
+_camera = {"on": True, "shot": 0, "last": None}
 _lit = {}                    # part -> (lit at, put out at or None)
 _lock = threading.Lock()
 _animating = {"thread": None}
@@ -130,10 +130,13 @@ def shot(eye, target, size, k):
 
 
 def direct(scene, target):
-    """The view to the part (or back to the whole after a line about none), then circling it."""
-    if not _camera["on"] or _camera["playing"]:
+    """The view to the part (or back to the whole after a line about none), then circling it - not while the view follows
+    a body (a chase camera behind a car)."""
+    if not _camera["on"]:
         return
     view = scene.ed.view_get()
+    if view.get("follow_body"):
+        return
     if target:
         aim, size = centre(scene, target)
         _camera["last"] = (aim, size)
@@ -143,16 +146,6 @@ def direct(scene, target):
         return
     _camera["shot"] += 1
     scene.ed.view_look(eye=shot(view["eye"], aim, size, _camera["shot"]), target=aim, glide=GLIDE, orbit=ORBIT)
-
-
-@on_play
-def _running(scene):
-    _camera["playing"] = True
-
-
-@on_stop
-def _stopped(scene):
-    _camera["playing"] = False
 
 
 @command(label="Сказать")
