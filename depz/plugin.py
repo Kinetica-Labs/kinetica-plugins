@@ -5,8 +5,9 @@ gives them to the plots («Графики»);
 depz_imu_read gives them to whoever asks - the console, a script, an agent, another plugin. The board's protocol is
 bno086.py beside this file, its tests test_depz.py.
 
-«Запястье за датчиком» (`depz_wrist`) turns the arm's wrist as the board turns while the scene plays: the board's turn
-since it was taken, carried into the world by how it is held, solved each frame into the wrist's three joints (hand.py);
+«Рука за датчиком» (`depz_arm`) lets the board lead the arm while a clutch is held - R the wrist, F the base, the
+shoulder and the elbow: the board's turn since the press, split into its three angles, each added to its own joint
+(hand.py); Space closes the hand's fingers and opens them again;
 the rest of the arm stands, no inverse kinematics of the editor, no goal. «Записать движение» keeps the board's orientation in a file of JSON lines and
 «Проиграть запись» plays it back as if the board moved: a take filmed again, the arm tried without the board."""
 import collections
@@ -16,7 +17,7 @@ import os
 import threading
 import time
 
-from kinetica.plugin import command, field, on_tick, show, tr, ui
+from kinetica.plugin import command, field, on_quit, on_tick, show, tr, ui
 
 import bno086
 import hand
@@ -28,7 +29,8 @@ X = {"t": "время с подключения, с"}
 
 _lock = threading.Lock()
 _imu = {"board": None, "port": "", "device": "", "streams": {}}
-_wrist = {"joints": []}  # the wrist the board turns: its joints, their rest, axes, the board's zero and mount (none: nothing)
+_lead = {}  # what the board leads, by clutch: "wrist", "arm" - joints, rest, the board's axes, zero, angles (none: nothing)
+_grip = {}  # the hand's fingers: (joint, open, closed) each, and the panel whose Space closes them
 SIGN = 1.0  # a joint's coordinate grows as body a turns about the axis this way round
 _playing = {"stop": threading.Event()}
 
@@ -106,19 +108,31 @@ def imu_connect(scene, port: str = field("", label="Порт", help="пусто 
     return {"port": _imu["port"], "device": _imu["device"], "streams": len(taken)}
 
 
-@command(label="Отключить датчик")
-def imu_disconnect(scene):
-    """Stop the board's reports and close its port; the kept samples stay for depz_imu_read."""
-    board = _imu["board"]
+def _release():
+    """The board's reports stopped and its port closed: a board left streaming into a port no one reads is not left."""
+    board, _imu["board"] = _imu["board"], None
     if not board:
-        return {"connected": False}
-    _imu["board"] = None
+        return False
     if not board.stopped.is_set():
         for r in _imu.get("taken", ()):
             board.feature(r, 0)
     board.close()
-    show(status=tr("не подключён"))
+    return True
+
+
+@command(label="Отключить датчик")
+def imu_disconnect(scene):
+    """Stop the board's reports and close its port; the kept samples stay for depz_imu_read."""
+    if _release():
+        show(status=tr("не подключён"))
     return {"connected": False}
+
+
+@on_quit
+def _quitting(scene):
+    """The editor closes or restarts the plugin: the board stopped before the process ends."""
+    _playing["stop"].set()
+    _release()
 
 
 @command(label="Показания датчика")
@@ -159,6 +173,17 @@ def _servos(scene):
     return joints, rest
 
 
+def _fingers(scene):
+    """The hand's fingers - the servo sliders (drive tx) - and how far each closes: (joint, open, closed) - its limits."""
+    out = []
+    for o in sorted((o for o in scene.objects if o.kind == "joint"), key=lambda o: o.id):
+        lines = scene.ed.scene_get(id=o.id)["lines"]
+        limit = next((line for line in lines if line[:2] == ["limit", "tx"]), None)
+        if any(line[:2] == ["drive", "tx"] for line in lines) and limit:
+            out.append((o.id, float(limit[limit.index("lower") + 1]), float(limit[limit.index("upper") + 1])))
+    return out
+
+
 def _world_turn(scene, id):
     """An object's turn in the world as the scene file has it: its own rotation under its parents' (the arm at rest)."""
     q = (1.0, 0.0, 0.0, 0.0)
@@ -180,39 +205,85 @@ def _axis(scene, joint):
     return hand.rotate(hand.mul(_world_turn(scene, a), hand.euler([float(v) for v in link[k + 1:k + 4]])), (1.0, 0.0, 0.0))
 
 
-@command(label="Запястье за датчиком")
-def wrist(scene, on: bool = field(True, label="Вести запястье")):
-    """The wrist turns as the board turns, its three joints solved each frame; the rest of the arm stands. Hold the
-    board with its x toward the screen, its chip up: that pose now is the wrist's pose now. ▶ starts if the scene is still."""
+CLUTCH = "Сцепление depz"  # the scene's panel: R lets the board lead the wrist while held, F the big joints, Space the fingers
+GROUPS = (("wrist", "R"), ("arm", "F"))  # the panel's buttons: which joints they let the board lead, and their keys
+BUTTONS = GROUPS + (("grip", "Space toggle"),)  # and the fingers' button: pressed - closed, pressed again - open
+
+
+def _clutch(scene):
+    """The panel with the two clutches' buttons - R the wrist, F the big joints - the scene's own, made once (one undo step)."""
+    found = next((o for o in scene.objects if o.kind == "controller" and o.name == CLUTCH), None)
+    if found and all(["action", name] == line[:2] for name, _ in BUTTONS
+                     for line in [next((l for l in scene.ed.scene_get(id=found.id)["lines"] if l[:2] == ["action", name]), [])]):
+        return found.id
+    if found:  # an older panel, with other buttons: made anew
+        scene.ed.scene_delete(ids=[found.id])
+    block = "".join(f"  action {name} button drive value\n  bind {name} keys {key}\n" for name, key in BUTTONS)
+    return scene.ed.scene_put(block=f'controller "{CLUTCH}"\n  object id 0\n{block}end\n')["id"]
+
+
+@command(label="Рука за датчиком")
+def arm(scene, on: bool = field(True, label="Вести руку"),
+        turn: int = field(0, choices=(0, 90, 180, 270), unit="°", label="Плата повёрнута",
+                          help="Как держите плату: 0 - ось X вправо, Y к экрану, чип вверх; иначе - на столько повёрнута вокруг Z")):
+    """The board leads the arm while a clutch is held, as a surgical robot's pedal: R - the wrist's three joints (the
+    hand turns), F - the big three, the base, the shoulder, the elbow (the hand moves). At the press the board's turn and
+    the joints' angles are caught; then each of the board's angles since the press turns its own joint (each board axis
+    leads the joint it lies nearest in this view, held X to the right, Y toward the screen, chip up); let go - the arm
+    stands and the board can be taken anew. ▶ starts if the scene is still."""
     if not on:
-        _wrist.update(joints=[])
-        show(status=tr("запястье отпущено"))
+        _lead.clear(), _grip.clear()
+        show(status=tr("рука отпущена"))
         return {"leading": False}
-    q = _latest_quat()
-    if q is None:
+    if _latest_quat() is None:
         raise RuntimeError(tr("нет показаний датчика: подключите его или проиграйте запись"))
     joints, rest = _servos(scene)
-    if len(joints) < 3:
-        raise RuntimeError(tr("в сцене нет руки с запястьем: нужны три шарнира с сервоприводами"))
+    if len(joints) < 6:
+        raise RuntimeError(tr("в сцене нет руки с запястьем: нужны шесть шарниров с сервоприводами"))
     view = scene.ed.view_get()
-    forward = [t - e for e, t in zip(view["eye"], view["target"])]
-    _wrist.update(joints=joints[-3:], rest=rest[-3:], axes=[_axis(scene, j) for j in joints[-3:]], zero=q,
-                  mount=hand.held(forward), angles=[0.0, 0.0, 0.0], shown=list(rest[-3:]))
+    mount = hand.held([t - e for e, t in zip(view["eye"], view["target"])], turn)
+    clutch = _clutch(scene)
+    _lead.clear()
+    for (name, _), part in zip(GROUPS, (slice(3, 6), slice(0, 3))):
+        ids = joints[part]
+        _lead[name] = {"joints": ids, "rest": rest[part], "led": hand.match(mount, [_axis(scene, j) for j in ids]), "zero": None,
+                       "base": [0.0] * 3, "split": [0.0] * 3, "angles": [0.0] * 3, "shown": list(rest[part]), "clutch": clutch}
+    _grip.update(fingers=_fingers(scene), clutch=clutch)
     if scene.ed.sim_state().get("mode") == "edit":
         scene.ed.sim_play()
-    show(status=tr("датчик ведёт запястье"))
-    return {"leading": True, "joints": _wrist["joints"], "axes": [[round(v, 3) for v in a] for a in _wrist["axes"]]}
+    show(status=tr("зажмите R - запястье, F - плечи и локоть; Пробел - схват"))
+    return {"leading": True, "clutch": clutch, "joints": {name: g["joints"] for name, g in _lead.items()},
+            "fingers": [f[0] for f in _grip["fingers"]]}
+
+
+def _held(sensors, name, clutch):
+    """Whether a clutch's button is held now: its panel's values, as the run gives them to a controller."""
+    panel = sensors.get(clutch) or sensors.get(str(clutch)) or {}
+    return float((panel.get("values") or {}).get(name, 0) or 0) > 0.5
 
 
 @on_tick
 def lead(scene, dt, sensors):
-    """This frame's targets of the wrist's three servos: the hand's turn in the world solved into their angles, smoothed."""
-    q = _latest_quat() if _wrist["joints"] else None
+    """This frame's targets of the arm's servos: for each clutch held, each joint's angle at the press plus the board's
+    turn since the press about the board's axis that leads it; smoothed."""
+    q = _latest_quat() if _lead else None
     if q is None:
         return {}
-    _wrist["angles"] = hand.solve(hand.wanted(q, _wrist["zero"], _wrist["mount"]), _wrist["axes"], _wrist["angles"])
-    _wrist["shown"] = hand.smooth(_wrist["shown"], [r + SIGN * a for r, a in zip(_wrist["rest"], _wrist["angles"])], dt)
-    return {j: {"target": round(v, 5)} for j, v in zip(_wrist["joints"], _wrist["shown"])}
+    out = {}
+    for name, g in _lead.items():
+        if _held(sensors, name, g["clutch"]):
+            if g["zero"] is None:  # the press: the board's turn and the joints' angles caught here
+                g["zero"], g["base"], g["split"] = q, list(g["angles"]), [0.0] * 3
+            # the board's turn since the press (zero⁻¹ · q), split into turns about its three axes, each added to its joint
+            g["split"] = hand.solve(hand.mul(hand.conj(g["zero"]), q), g["led"], g["split"])
+            g["angles"] = [b + a for b, a in zip(g["base"], g["split"])]
+        else:
+            g["zero"] = None
+        g["shown"] = hand.smooth(g["shown"], [r + SIGN * a for r, a in zip(g["rest"], g["angles"])], dt)
+        out.update({j: {"target": round(v, 5)} for j, v in zip(g["joints"], g["shown"])})
+    closed = _held(sensors, "grip", _grip.get("clutch"))  # Space: pressed - the fingers close to their limit (they stop on what they hold)
+    out.update({j: {"target": shut if closed else open_} for j, open_, shut in _grip.get("fingers", ())})
+    return out
 
 
 @command(label="Записать движение")
@@ -276,8 +347,8 @@ ui.panel("depz",
                     ui.choice("orientation", tuple(ORIENTATION), label="Ориентация"),
                     ui.row(ui.button(imu_connect, "Подключить"), ui.button(imu_disconnect, "Отключить")),
                     ui.value("status", "Датчик", "не подключён")),
-         ui.section("Запястье за датчиком", ui.label("Плату держите осью X к экрану, чипом вверх, и нажмите «Взять запястье»."),
-                    ui.row(ui.button(wrist, "Взять запястье"), ui.button(record, "Записать"), ui.button(play, "Проиграть"))),
+         ui.section("Рука за датчиком", ui.label("Плата: X вправо, Y к экрану, чип вверх. «Взять руку», потом зажмите R - запястье, F - плечи и локоть; отпустите - рука стоит. Пробел - сжать или разжать схват."),
+                    ui.row(ui.button(arm, "Взять руку"), ui.button(record, "Записать"), ui.button(play, "Проиграть"))),
          ui.chart("Углы", {"roll": "крен", "pitch": "тангаж", "yaw": "рыскание"}, unit="°", x=X),
          ui.chart("Ускорение", {"ax": "x", "ay": "y", "az": "z"}, unit="м/с²", x=X),
          ui.chart("Угловая скорость", {"gx": "x", "gy": "y", "gz": "z"}, unit="°/с", x=X),

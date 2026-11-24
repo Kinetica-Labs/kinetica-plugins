@@ -56,20 +56,30 @@ class HandTests(unittest.TestCase):
     """The board turns the wrist (hand.py): its turn since zero, carried into the world by how it is held, solved into
     three joint angles."""
 
-    def test_the_zero_pose_asks_no_turn(self):
-        q = hand.about((0.6, 0.0, 0.8), 0.9)
-        self.assertLess(max(abs(v) for v in hand.log(hand.wanted(q, q, hand.held((0, 0, -1))))), 1e-9)
+    UR5E = [(-1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, -1.0, 0.0)]  # its wrist's axes at rest, as the scene has them
 
-    def test_held_x_into_the_screen_z_up(self):
+    def test_held_x_right_y_into_the_screen_z_up(self):
         mount = hand.held((0.3, -0.5, -0.9))  # a view looking down a little: laid flat
-        x, z = hand.rotate(mount, (1, 0, 0)), hand.rotate(mount, (0, 0, 1))
+        x, y, z = (hand.rotate(mount, v) for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
         n = math.hypot(0.3, 0.9)
-        self.assertAlmostEqual(x[0], 0.3 / n), self.assertAlmostEqual(x[1], 0.0), self.assertAlmostEqual(x[2], -0.9 / n)
+        self.assertAlmostEqual(y[0], 0.3 / n), self.assertAlmostEqual(y[1], 0.0), self.assertAlmostEqual(y[2], -0.9 / n)
+        self.assertAlmostEqual(x[0], 0.9 / n), self.assertAlmostEqual(x[2], 0.3 / n)  # to the right of it
         self.assertAlmostEqual(z[1], 1.0)
 
-    def test_a_turn_about_the_board_up_turns_the_hand_about_world_up(self):
-        turn = hand.wanted(hand.about((0, 0, 1), 0.7), (1.0, 0.0, 0.0, 0.0), hand.held((0, 0, -1)))
-        self.assertTrue(all(abs(a - b) < 1e-9 for a, b in zip(hand.log(turn), (0.0, 0.7, 0.0))))
+    def test_each_board_axis_leads_its_nearest_joint(self):
+        led = hand.match(hand.held((0.0, 0.0, -1.0)), self.UR5E)  # looking along -z: x right, y in, z up
+        self.assertEqual(led, [(-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, -1.0)])
+        led = hand.match(hand.held((1.0, 0.0, 0.0)), self.UR5E)   # looking along +x: the board's y lies along the first joint
+        self.assertEqual([abs(sum(v)) for v in led], [1.0, 1.0, 1.0])
+        self.assertEqual(led[0], (0.0, -1.0, 0.0))
+
+    def test_a_turn_about_one_board_axis_moves_one_joint(self):
+        led = hand.match(hand.held((0.0, 0.0, -1.0)), self.UR5E)
+        for k, axis in enumerate(((1, 0, 0), (0, 1, 0), (0, 0, 1))):
+            split = hand.solve(hand.about(axis, 0.4), led, [0.0, 0.0, 0.0])
+            want = [0.0, 0.0, 0.0]
+            want[[i for i, a in enumerate(led) if abs(sum(a)) and a[k]][0]] = 0.4 * sum(led[[i for i, a in enumerate(led) if a[k]][0]])
+            self.assertTrue(all(abs(a - b) < 1e-6 for a, b in zip(split, want)), (axis, split))
 
     def test_the_wrist_solved_from_its_last_angles(self):
         axes = [(-1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, -1.0, 0.0)]  # the UR5e's wrist at rest
@@ -77,6 +87,15 @@ class HandTests(unittest.TestCase):
         turn = hand.mul(hand.mul(hand.about(axes[0], th[0]), hand.about(axes[1], th[1])), hand.about(axes[2], th[2]))
         got = hand.solve(turn, axes, [0.3, -0.6, 1.0])  # the last frame's: near
         self.assertTrue(all(abs(a - b) < 1e-6 for a, b in zip(got, th)))
+
+    def test_at_the_singularity_the_wrist_does_not_spin(self):
+        axes = [(-1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, -1.0, 0.0)]
+        th = [0.0, math.pi / 2 - 0.01, 0.0]  # the middle joint near 90°: the first and the last axes almost in line
+        turn = hand.mul(hand.mul(hand.about(axes[0], 0.3), hand.about(axes[1], math.pi / 2)), hand.about(axes[2], -0.2))
+        for _ in range(30):  # half a second of frames asking for it
+            last, th = th, hand.solve(turn, axes, th)
+            self.assertLess(max(abs(a - b) for a, b in zip(th, last)), 6 * hand.STEP + 1e-9)
+        self.assertLess(abs(th[0]) + abs(th[2]), 3.0)  # no runaway of the two against each other
 
     def test_smoothly(self):
         shown = [0.0]

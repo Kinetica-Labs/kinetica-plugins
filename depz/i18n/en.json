@@ -47,11 +47,13 @@
   "нет показаний датчика: подключите его": "no readings: connect the board",
   "запись «{name}» готова": "recording «{name}» is ready",
   "в записи нет отсчётов": "the recording has no samples",
-  "Запястье за датчиком": "Wrist by the board",
-  "Вести запястье": "Lead the wrist",
-  "Взять запястье": "Take the wrist",
-  "Плату держите осью X к экрану, чипом вверх, и нажмите «Взять запястье».": "Hold the board with its X toward the screen, chip up, and press «Take the wrist».",
-  "запястье отпущено": "the wrist let go",
-  "в сцене нет руки с запястьем: нужны три шарнира с сервоприводами": "no arm with a wrist in the scene: three hinges with servos are needed",
-  "датчик ведёт запястье": "the board turns the wrist"
+  "Плата повёрнута": "Board turned",
+  "Как держите плату: 0 - ось X вправо, Y к экрану, чип вверх; иначе - на столько повёрнута вокруг Z": "How the board is held: 0 - X to the right, Y toward the screen, chip up; else - turned so much about Z",
+  "Рука за датчиком": "Arm by the board",
+  "Вести руку": "Lead the arm",
+  "Взять руку": "Take the arm",
+  "рука отпущена": "the arm let go",
+  "в сцене нет руки с запястьем: нужны шесть шарниров с сервоприводами": "no arm with a wrist in the scene: six hinges with servos are needed",
+  "зажмите R - запястье, F - плечи и локоть; Пробел - схват": "hold R - the wrist, F - the shoulders and the elbow; Space - the gripper",
+  "Плата: X вправо, Y к экрану, чип вверх. «Взять руку», потом зажмите R - запястье, F - плечи и локоть; отпустите - рука стоит. Пробел - сжать или разжать схват.": "The board: X to the right, Y toward the screen, chip up. «Take the arm», then hold R - the wrist, F - the shoulders and the elbow; let go - the arm stands. Space - close or open the gripper."
 }

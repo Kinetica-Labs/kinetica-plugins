@@ -1,8 +1,11 @@
-"""The orientation board turns the arm's wrist (plugin.py's «Запястье за датчиком»): the board's turn since the pose it
-had when taken, carried into the world by how it is held - its x into the screen, its z up - and the wrist's three joints
-solved so that the hand turns in the world exactly so. Their rotations about their axes (the arm at rest, the product of
-exponentials) composed must give that turn: a few Newton steps from the last frame's angles - no jumps, any three axes.
+"""The orientation board turns the arm's wrist (plugin.py's «Запястье за датчиком»), each of its angles one joint: the
+board's turn since the press, in its own axes, split into three turns about its axes - each the axis that, as the board is
+held (x to the right of the view, y into it, z up), lies nearest one of the wrist's joints (match) - and each added to that
+joint. A turn about one axis of the board moves one joint. Their rotations about their axes (the arm at rest, the product of
+exponentials) composed must give that turn: a few damped least squares steps from the last frame's angles - no jumps,
+no spinning at the wrist's singularity, any three axes.
 No editor here: the arithmetic only, tested by test_depz.py."""
+import itertools
 import math
 
 TAU = 0.06      # s: the smoothing's time constant - the board's jitter gone, the motion still the hand's
@@ -45,14 +48,14 @@ def euler(degrees):
     return mul(mul(about((0, 1, 0), y), about((1, 0, 0), x)), about((0, 0, 1), z))
 
 
-def held(forward):
-    """How the board is held: its x along the view's `forward` laid flat, its y to the left of it, its z up - the turn
-    from the board's axes to the world's (Y up)."""
+def held(forward, turn=0.0):
+    """How the board is held: its x to the right of the view, its y along the view's `forward` laid flat, its z up;
+    `turn` - degrees the board is turned about its z from that. The turn from the board's axes to the world's (Y up)."""
     fx, fz = forward[0], forward[2]
     n = math.hypot(fx, fz) or 1.0
     fx, fz = fx / n, fz / n
-    # columns: x -> (fx, 0, fz), y -> (fz, 0, -fx) (up × forward), z -> (0, 1, 0)
-    return matrix(((fx, fz, 0.0), (0.0, 0.0, 1.0), (fz, -fx, 0.0)))
+    # columns: x -> right (-fz, 0, fx), y -> forward (fx, 0, fz), z -> up (0, 1, 0)
+    return mul(matrix(((-fz, fx, 0.0), (0.0, 0.0, 1.0), (fx, fz, 0.0))), about((0.0, 0.0, 1.0), math.radians(turn)))
 
 
 def matrix(m):
@@ -69,46 +72,57 @@ def matrix(m):
     return tuple(q)
 
 
-def wanted(q, zero, mount):
-    """The turn the hand is to make in the world: the board's since its zero pose, in the board's own frame (zero⁻¹ · q),
-    carried into the world by how it is held."""
-    return mul(mul(mount, mul(conj(zero), q)), conj(mount))
+def match(mount, joint_axes):
+    """Which of the board's axes leads which joint of the wrist: each board axis, carried into the world by how it is held
+    (`mount`), to the joint whose axis at rest it lies nearest - the one assignment of the three that fits best - and
+    signed so that turning the board one way turns the joint the same way. The board's axes, signed, in the joints' order."""
+    board = [rotate(mount, e) for e in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))]
+
+    def dot(a, b):
+        return sum(x * y for x, y in zip(a, b))
+
+    order = max(itertools.permutations(range(3)), key=lambda p: sum(abs(dot(board[p[i]], joint_axes[i])) for i in range(3)))
+    unit = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    return [tuple(v * (1 if dot(board[k], joint_axes[i]) >= 0 else -1) for v in unit[k]) for i, k in enumerate(order)]
 
 
-def solve(turn, axes, start, steps=4):
-    """The three joint angles whose rotations about `axes` (world, the arm at rest), composed in turn, give `turn` - Newton
-    from `start`, each step at most half a radian."""
+DAMPING, STEP = 0.15, 0.3  # damped least squares (Wampler, Nakamura): near a singularity the wrist lags, never spins; rad a step at most
+
+
+def solve(turn, axes, start, steps=6):
+    """The three joint angles whose rotations about `axes` (world, the arm at rest), composed in turn, give `turn` - from
+    `start` by damped least squares, each step at most STEP: where two of the wrist's axes come into line (the wrist's
+    singularity) the hand turns as far as it can and waits, instead of the two joints spinning against each other."""
     th = list(start)
     for _ in range(steps):
         got = mul(mul(about(axes[0], th[0]), about(axes[1], th[1])), about(axes[2], th[2]))
         err = log(mul(turn, conj(got)))  # what is left, in the world
-        if math.sqrt(sum(e * e for e in err)) < 1e-6:
+        if math.sqrt(sum(e * e for e in err)) < 1e-7:
             break
         q1 = about(axes[0], th[0])
         cols = (axes[0], rotate(q1, axes[1]), rotate(mul(q1, about(axes[1], th[1])), axes[2]))  # the axes where they are now
-        step = _solve3(cols, err)
-        if step is None:
-            break
-        top = max(abs(s) for s in step)
-        scale = 0.5 / top if top > 0.5 else 1.0
-        th = [t + s * scale for t, s in zip(th, step)]
+        jjt = [[sum(c[r] * c[k] for c in cols) + (DAMPING ** 2 if r == k else 0.0) for k in range(3)] for r in range(3)]
+        y = _gauss(jjt, list(err))
+        step = [sum(c[r] * y[r] for r in range(3)) for c in cols]
+        top = max(abs(v) for v in step)
+        scale = STEP / top if top > STEP else 1.0
+        th = [t + v * scale for t, v in zip(th, step)]
     return th
 
 
-def _solve3(cols, b):
-    """x with x0·c0 + x1·c1 + x2·c2 = b (Cramer; a little damping), or None at a singularity."""
-    (a, d, g), (b1, e, h), (c, f, i) = cols  # columns
-    det = a * (e * i - f * h) - b1 * (d * i - f * g) + c * (d * h - e * g)
-    if abs(det) < 1e-9:
-        return None
-
-    def with_b(k):
-        m = [list(cols[0]), list(cols[1]), list(cols[2])]
-        m[k] = list(b)
-        (p, q, r), (s, t, u), (v, w, x) = m
-        return p * (t * x - u * w) - s * (q * x - r * w) + v * (q * u - r * t)
-
-    return [with_b(k) / det for k in range(3)]
+def _gauss(a, b):
+    """x of a x = b for a 3x3 symmetric positive definite a (J Jᵀ + λ² I): elimination with partial pivoting."""
+    m = [row[:] + [v] for row, v in zip(a, b)]
+    for c in range(3):
+        p = max(range(c, 3), key=lambda r: abs(m[r][c]))
+        m[c], m[p] = m[p], m[c]
+        for r in range(c + 1, 3):
+            f = m[r][c] / m[c][c]
+            m[r] = [x - f * y for x, y in zip(m[r], m[c])]
+    x = [0.0, 0.0, 0.0]
+    for r in (2, 1, 0):
+        x[r] = (m[r][3] - sum(m[r][k] * x[k] for k in range(r + 1, 3))) / m[r][r]
+    return x
 
 
 def smooth(shown, wanted_angles, dt):
