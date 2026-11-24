@@ -41,5 +41,17 @@
   "dvisvgm записал преобразование, которого этот плагин не знает": "dvisvgm wrote a transform that this plugin does not know",
   "формула пуста: LaTeX ничего не нарисовал": "the formula is empty: LaTeX drew nothing",
   "«{latex}» — {problem}": "\"{latex}\" — {problem}",
-  "формул в сцене: {n}": "formulas in the scene: {n}"
+  "формул в сцене: {n}": "formulas in the scene: {n}",
+  "Выноска": "Callout",
+  "Где надпись": "Where the words stand",
+  "От фигуры по осям мира: надпись в стороне, выноска - к детали": "From the shape along the world's axes: the words aside, the leader to the part",
+  "Точка на детали": "Point on the part",
+  "В осях фигуры: сюда показывает выноска; тяните оранжевую точку по детали": "In the shape's axes: where the leader points; drag the orange point over the part",
+  "Конец выноски": "Leader end",
+  "Точка - на детали, стрелка - на её контуре, нет - без знака": "A dot on the part, an arrow on its outline, none - no mark",
+  "точка": "dot",
+  "стрелка": "arrow",
+  "нет": "none",
+  "Фигура": "Shape",
+  "Её id; 0 - выделенные": "Its id; 0 - the selected ones"
 }

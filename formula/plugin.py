@@ -2,7 +2,8 @@
 
 A formula belongs to a shape, as its component. «Формула над объектом» is drawn on the screen over its shape, facing
 the viewer, and goes where the shape goes - in the edit and while the scene plays; «Формула в мире» lies in the world
-on the shape; «Титр» stands in the frame. Select a shape and press a button of the «Формулы» tab (or «+ Добавить
+on the shape; «Титр» stands in the frame; «Выноска» stands aside with a leader line to a point of the shape, as a drawing
+labels a part (ГОСТ 2.316, ISO 128-22) - what an agent explaining what it builds needs. Select a shape and press a button of the «Формулы» tab (or «+ Добавить
 компонент» in the inspector), then type LaTeX in the component's card: the formula is typeset anew on Enter. With
 nothing selected a button makes the formula a small hidden shape of its own, «Формула N»: click the formula to select it.
 
@@ -52,6 +53,24 @@ class Screen:
     left = field(50.0, unit="%", range=(0.0, 100.0), label="Слева")
     top = field(12.0, unit="%", range=(0.0, 100.0), label="Сверху")
     colour = field((0.96, 0.96, 0.98), **_COLOUR)
+    outline = _EDGE
+
+
+# The leader's end, as a drawing marks it (ГОСТ 2.316, ISO 128-22): a dot on the part, an arrow on its outline, or none.
+_ENDS = {"точка": "dot", "стрелка": "arrow", "нет": "none"}
+
+
+@component(label="Выноска")
+class Callout:
+    """LaTeX в стороне от фигуры и линия-выноска к её точке, как на чертеже (ГОСТ 2.316, ISO 128-22): надпись на полке,
+    от ближнего к детали конца полки - линия к точке; точку тянут оранжевой ручкой прямо по детали."""
+    latex = _LATEX
+    size = field(4.0, unit="% вида", range=(0.5, 50.0), label="Размер", help="Высота буквы в долях высоты вида")
+    offset = field((0.6, 0.5, 0.0), unit="м", label="Где надпись", help="От фигуры по осям мира: надпись в стороне, выноска - к детали")
+    point = field((0.0, 0.0, 0.0), unit="м", handle="point", label="Точка на детали",
+                  help="В осях фигуры: сюда показывает выноска; тяните оранжевую точку по детали")
+    end = field("точка", choices=tuple(_ENDS), label="Конец выноски", help="Точка - на детали, стрелка - на её контуре, нет - без знака")
+    colour = field((1.0, 0.86, 0.3), **_COLOUR)
     outline = _EDGE
 
 
@@ -181,7 +200,7 @@ _drawn = set()  # the keys of the pictures on the view
 def redraw(scene):
     """Every formula of the scene on the view: typeset (once a source) and painted where its component says."""
     keys, problems = set(), []
-    for kind in (Label, World, Screen):
+    for kind in (Label, World, Screen, Callout):
         for id, v in kind.instances(scene):
             try:
                 outlines = typeset(str(v["latex"]))
@@ -192,6 +211,9 @@ def redraw(scene):
             edge = EDGE if v["outline"] else {}
             if kind is Label:
                 draw.fill(key, outlines, object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"], **edge)
+            elif kind is Callout:
+                draw.fill(key, outlines, object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"],
+                          leader={"point": v["point"], "end": _ENDS.get(str(v["end"]), "dot")}, **edge)
             elif kind is World:
                 draw.fill(key, outlines, object=id, at=v["offset"], turn=v["turn"], scale=v["size"], colour=v["colour"], **edge)
             else:
@@ -206,9 +228,9 @@ def redraw(scene):
     show(state="⚠ " + problems[0] if problems else tr("формул в сцене: {n}").format(n=len(keys)))
 
 
-def _put(scene, kind, latex):
-    """The component on every selected shape; with none selected, on a small hidden shape of its own."""
-    shapes = [o for o in scene.editor.selection if o.kind == "entity"]
+def _put(scene, kind, latex, target=0):
+    """The component on the shape `target` (an id; 0: every selected one); with none, on a small hidden shape of its own."""
+    shapes = [scene.objects[int(target)]] if target else [o for o in scene.editor.selection if o.kind == "entity"]
     if not shapes:
         holder = scene.add("box", name=f"{kind._kinetica['label']} {1 + sum(1 for _ in kind.instances(scene))}", position=(0.0, 1.0, 0.0),
                            size=(0.05, 0.05, 0.05))
@@ -217,7 +239,10 @@ def _put(scene, kind, latex):
     type = f"formula.{kind._kinetica['name']}"
     for shape in shapes:
         values = {"latex": latex}
-        if kind is not Screen and shape.visible:  # over the shape, or on its top
+        if kind is Callout and shape.visible:  # aside and above the shape, the leader to the middle of its top
+            values["offset"] = [shape.size[0] / 2 + 0.4, shape.size[1] / 2 + 0.35, 0.0]
+            values["point"] = [0.0, shape.size[1] / 2, 0.0]
+        elif kind is not Screen and shape.visible:  # over the shape, or on its top
             values["offset"] = [0.0, shape.size[1] / 2 + (0.25 if kind is Label else 0.02), 0.0]
         scene.ed.component_set(id=shape.id, type=type, values=values)
     scene.editor.select(*shapes)
@@ -249,7 +274,15 @@ def screen(scene, latex: str = _LATEX):
     return _put(scene, Screen, latex)
 
 
+@command(label="Выноска")
+def callout(scene, latex: str = _LATEX, target: int = field(0, range=(0, 10**9), label="Фигура", help="Её id; 0 - выделенные")):
+    """Формула в стороне от фигуры и линия-выноска к ней, как на чертеже: агент подписывает то, что строит; точку на
+    детали потом тянут оранжевой ручкой, конец выноски - точка, стрелка или нет."""
+    return _put(scene, Callout, latex, target)
+
+
 ui.panel("Формулы", ui.section("Новая формула", ui.text("latex", "F = ma", label="LaTeX"),
-                               ui.row(ui.button(label, "Над объектом"), ui.button(world, "В мире"), ui.button(screen, "Титр"))),
+                               ui.row(ui.button(label, "Над объектом"), ui.button(world, "В мире"), ui.button(screen, "Титр"),
+                                      ui.button(callout, "Выноска"))),
          ui.label("Выделите фигуру и нажмите кнопку; потом правьте LaTeX в её карточке — формула набирается заново."),
          ui.value("state", "Состояние", "—"))
