@@ -16,8 +16,9 @@ magnet's datasheet number at its gap); copper at 20 °C (its resistance grows 0.
 iron losses, no inductance (L/R is a fraction of a millisecond, under a frame); the gearbox lossless. The running
 world then solves the motor with its driver and battery each step (the editor's src/sim/RobotPower.cpp).
 
-While the scene runs, each battery's charge and power hang over the robot, 4 times a second: «Батарея 1: 98,7 %» and
-«P = U·I = 12,43 В × 5,3 А = 66 Вт» - the model's numbers (sim_measure), for a person: no controller reads them."""
+While the scene runs, each battery's charge and power stand beside the robot on a leader line to it, laid out with the
+scene's other callouts (place aside), 4 times a second: «Батарея 1: 98,7 %» and «P = U·I = 12,43 В × 5,3 А = 66 Вт» -
+the model's numbers (sim_measure), for a person: no controller reads them."""
 import math
 import threading
 
@@ -95,7 +96,7 @@ def _show(scene, stop):
         try:
             c = {x["id"]: x["value"] for x in scene.ed.sim_measure(scene=True)["channels"]}
             scene.ed.view_draw(key="motors/books", text=books_text(c, packs), at=[0, 0.35, 0], space="label", size=15,
-                               **({"object": body} if body else {}))
+                               **({"object": body, "leader": {"point": [0, 0, 0], "end": "dot", "place": "aside"}} if body else {}))
         except Exception as e:  # the run stopping under it ends it; anything else is said
             if stop.is_set():
                 break

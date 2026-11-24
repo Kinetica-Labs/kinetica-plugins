@@ -1,0 +1,9 @@
+{
+  "Рассказ": "Narration",
+  "Сказать": "Say",
+  "Что сейчас строю": "What I am building now",
+  "Одна короткая фраза для зрителя: что и зачем": "One short sentence for the viewer: what and why",
+  "Деталь": "Part",
+  "Номер объекта, о котором строка: он светится, пока строка последняя (0 - никакой)": "The object the line is about: it glows while the line is the newest (0 - none)",
+  "Убрать рассказ": "Clear the narration"
+}
