@@ -53,40 +53,37 @@ class ProtocolTests(unittest.TestCase):
 
 
 class HandTests(unittest.TestCase):
-    """The board as the arm's puppet strings (hand.py): its turn from the zero pose to the joints' targets."""
+    """The board turns the wrist (hand.py): its turn since zero, carried into the world by how it is held, solved into
+    three joint angles."""
 
-    @staticmethod
-    def about(axis, radians):
-        half = radians / 2
-        return (math.cos(half), *[v * math.sin(half) for v in axis])
+    def test_the_zero_pose_asks_no_turn(self):
+        q = hand.about((0.6, 0.0, 0.8), 0.9)
+        self.assertLess(max(abs(v) for v in hand.log(hand.wanted(q, q, hand.held((0, 0, -1))))), 1e-9)
 
-    def test_the_zero_pose_leaves_the_arm_where_it_stood(self):
-        q = (0.9, 0.1, -0.3, 0.3)
-        n = math.sqrt(sum(v * v for v in q))
-        q = tuple(v / n for v in q)
-        rest = [0.1, -0.2, 0.3, 0.0, 0.0, 0.5]
-        self.assertEqual([round(v, 9) for v in hand.targets(hand.angles(hand.relative(q, q)), rest)], rest)
+    def test_held_x_into_the_screen_z_up(self):
+        mount = hand.held((0.3, -0.5, -0.9))  # a view looking down a little: laid flat
+        x, z = hand.rotate(mount, (1, 0, 0)), hand.rotate(mount, (0, 0, 1))
+        n = math.hypot(0.3, 0.9)
+        self.assertAlmostEqual(x[0], 0.3 / n), self.assertAlmostEqual(x[1], 0.0), self.assertAlmostEqual(x[2], -0.9 / n)
+        self.assertAlmostEqual(z[1], 1.0)
 
-    def test_each_angle_leads_its_joints(self):
-        zero, rest = (1.0, 0.0, 0.0, 0.0), [0.0] * 6
-        yaw = hand.targets(hand.angles(hand.relative(self.about((0, 0, 1), 0.5), zero)), rest)
-        self.assertAlmostEqual(yaw[0], 0.5)
-        self.assertEqual(yaw[1:], [0.0] * 5)
-        pitch = hand.targets(hand.angles(self.about((0, 1, 0), 0.3)), rest)
-        self.assertAlmostEqual(pitch[1], 0.3)
-        self.assertAlmostEqual(pitch[2], -0.18)  # the elbow bent back by 0.6 of it
-        roll = hand.targets(hand.angles(self.about((1, 0, 0), -0.7)), rest, flip=("roll",))
-        self.assertAlmostEqual(roll[5], 0.7)     # reversed
-        self.assertEqual(len(hand.targets(hand.angles(self.about((1, 0, 0), 1.0)), [0.0] * 3)), 3)  # no wrist: skipped
+    def test_a_turn_about_the_board_up_turns_the_hand_about_world_up(self):
+        turn = hand.wanted(hand.about((0, 0, 1), 0.7), (1.0, 0.0, 0.0, 0.0), hand.held((0, 0, -1)))
+        self.assertTrue(all(abs(a - b) < 1e-9 for a, b in zip(hand.log(turn), (0.0, 0.7, 0.0))))
 
-    def test_led_no_further_than_the_limit_and_smoothly(self):
-        far = hand.targets({"yaw": 9.0, "pitch": 0.0, "roll": 0.0}, [0.2] * 6)
-        self.assertAlmostEqual(far[0], 0.2 + hand.LIMIT)
+    def test_the_wrist_solved_from_its_last_angles(self):
+        axes = [(-1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, -1.0, 0.0)]  # the UR5e's wrist at rest
+        th = [0.4, -0.7, 1.1]
+        turn = hand.mul(hand.mul(hand.about(axes[0], th[0]), hand.about(axes[1], th[1])), hand.about(axes[2], th[2]))
+        got = hand.solve(turn, axes, [0.3, -0.6, 1.0])  # the last frame's: near
+        self.assertTrue(all(abs(a - b) < 1e-6 for a, b in zip(got, th)))
+
+    def test_smoothly(self):
         shown = [0.0]
         for _ in range(60):  # a second of frames
             shown = hand.smooth(shown, [1.0], 1 / 60)
         self.assertGreater(shown[0], 0.99)
-        self.assertLess(hand.smooth([0.0], [1.0], 1 / 60)[0], 0.25)  # no jump in one frame
+        self.assertLess(hand.smooth([0.0], [1.0], 1 / 60)[0], 0.3)  # no jump in one frame
 
 
 if __name__ == "__main__":

@@ -5,9 +5,9 @@ gives them to the plots («Графики»);
 depz_imu_read gives them to whoever asks - the console, a script, an agent, another plugin. The board's protocol is
 bno086.py beside this file, its tests test_depz.py.
 
-«Рука за датчиком» (`depz_arm`) makes the board an arm's puppet strings while the scene plays: its turn from the pose it
-had when taken - heading to the base, tilt to the shoulder and the elbow, twist to the wrist (hand.py) - led to the
-arm's servos each frame, smoothed. «Записать движение» keeps the board's orientation in a file of JSON lines and
+«Запястье за датчиком» (`depz_wrist`) turns the arm's wrist as the board turns while the scene plays: the board's turn
+since it was taken, carried into the world by how it is held, solved each frame into the wrist's three joints (hand.py);
+the rest of the arm stands, no inverse kinematics of the editor, no goal. «Записать движение» keeps the board's orientation in a file of JSON lines and
 «Проиграть запись» plays it back as if the board moved: a take filmed again, the arm tried without the board."""
 import collections
 import json
@@ -28,7 +28,8 @@ X = {"t": "время с подключения, с"}
 
 _lock = threading.Lock()
 _imu = {"board": None, "port": "", "device": "", "streams": {}}
-_arm = {"joints": [], "rest": [], "zero": None, "shown": None, "flip": ()}  # the arm the board leads (none: it leads nothing)
+_wrist = {"joints": []}  # the wrist the board turns: its joints, their rest, axes, the board's zero and mount (none: nothing)
+SIGN = 1.0  # a joint's coordinate grows as body a turns about the axis this way round
 _playing = {"stop": threading.Event()}
 
 
@@ -158,40 +159,60 @@ def _servos(scene):
     return joints, rest
 
 
-@command(label="Рука за датчиком")
-def arm(scene, on: bool = field(True, label="Вести руку"),
-        flip: str = field("", label="Обратить", help="углы, что идут наоборот, через запятую: yaw (поворот), pitch (наклон), roll (вращение)")):
-    """The board leads the arm while the scene plays: turn - the base, tilt - the shoulder and the elbow, twist - the
-    wrist. The pose the board has now is the arm's pose now; ▶ starts if the scene is not running."""
+def _world_turn(scene, id):
+    """An object's turn in the world as the scene file has it: its own rotation under its parents' (the arm at rest)."""
+    q = (1.0, 0.0, 0.0, 0.0)
+    while id:
+        lines = scene.ed.scene_get(id=id)["lines"]
+        pose = next((line for line in lines if line[0] in ("shape", "pose") and "rotation" in line), None)
+        if pose:
+            k = pose.index("rotation")
+            q = hand.mul(hand.euler([float(v) for v in pose[k + 1:k + 4]]), q)
+        head = next(line for line in lines if line[0] == "object")
+        id = int(head[head.index("parent") + 1]) if "parent" in head else 0
+    return q
+
+
+def _axis(scene, joint):
+    """A hinge's axis in the world, the arm at rest: its frame in body a (frame_a), that body as the scene has it."""
+    link = next(line for line in scene.ed.scene_get(id=joint)["lines"] if line[0] == "link")
+    a, k = int(link[link.index("a") + 1]), link.index("frame_a")
+    return hand.rotate(hand.mul(_world_turn(scene, a), hand.euler([float(v) for v in link[k + 1:k + 4]])), (1.0, 0.0, 0.0))
+
+
+@command(label="Запястье за датчиком")
+def wrist(scene, on: bool = field(True, label="Вести запястье")):
+    """The wrist turns as the board turns, its three joints solved each frame; the rest of the arm stands. Hold the
+    board with its x toward the screen, its chip up: that pose now is the wrist's pose now. ▶ starts if the scene is still."""
     if not on:
-        _arm.update(joints=[], zero=None)
-        show(status=tr("рука отпущена"))
+        _wrist.update(joints=[])
+        show(status=tr("запястье отпущено"))
         return {"leading": False}
     q = _latest_quat()
     if q is None:
         raise RuntimeError(tr("нет показаний датчика: подключите его или проиграйте запись"))
     joints, rest = _servos(scene)
-    if len(joints) < 2:
-        raise RuntimeError(tr("в сцене нет руки: нужны шарниры с сервоприводами"))
-    flips = tuple(w.strip() for w in flip.split(",") if w.strip())
-    if set(flips) - {"yaw", "pitch", "roll"}:
-        raise ValueError(tr("обратить можно yaw, pitch, roll"))
-    _arm.update(joints=joints, rest=rest, zero=q, shown=list(rest), flip=flips)
+    if len(joints) < 3:
+        raise RuntimeError(tr("в сцене нет руки с запястьем: нужны три шарнира с сервоприводами"))
+    view = scene.ed.view_get()
+    forward = [t - e for e, t in zip(view["eye"], view["target"])]
+    _wrist.update(joints=joints[-3:], rest=rest[-3:], axes=[_axis(scene, j) for j in joints[-3:]], zero=q,
+                  mount=hand.held(forward), angles=[0.0, 0.0, 0.0], shown=list(rest[-3:]))
     if scene.ed.sim_state().get("mode") == "edit":
         scene.ed.sim_play()
-    show(status=tr("датчик ведёт руку: {n} суставов").format(n=len(joints)))
-    return {"leading": True, "joints": joints}
+    show(status=tr("датчик ведёт запястье"))
+    return {"leading": True, "joints": _wrist["joints"], "axes": [[round(v, 3) for v in a] for a in _wrist["axes"]]}
 
 
 @on_tick
 def lead(scene, dt, sensors):
-    """This frame's targets of the arm's servos from the board's turn, smoothed."""
-    q = _latest_quat() if _arm["joints"] else None
+    """This frame's targets of the wrist's three servos: the hand's turn in the world solved into their angles, smoothed."""
+    q = _latest_quat() if _wrist["joints"] else None
     if q is None:
         return {}
-    wanted = hand.targets(hand.angles(hand.relative(q, _arm["zero"])), _arm["rest"], _arm["flip"])
-    _arm["shown"] = hand.smooth(_arm["shown"], wanted, dt)
-    return {j: {"target": round(v, 5)} for j, v in zip(_arm["joints"], _arm["shown"])}
+    _wrist["angles"] = hand.solve(hand.wanted(q, _wrist["zero"], _wrist["mount"]), _wrist["axes"], _wrist["angles"])
+    _wrist["shown"] = hand.smooth(_wrist["shown"], [r + SIGN * a for r, a in zip(_wrist["rest"], _wrist["angles"])], dt)
+    return {j: {"target": round(v, 5)} for j, v in zip(_wrist["joints"], _wrist["shown"])}
 
 
 @command(label="Записать движение")
@@ -255,8 +276,8 @@ ui.panel("depz",
                     ui.choice("orientation", tuple(ORIENTATION), label="Ориентация"),
                     ui.row(ui.button(imu_connect, "Подключить"), ui.button(imu_disconnect, "Отключить")),
                     ui.value("status", "Датчик", "не подключён")),
-         ui.section("Рука за датчиком", ui.text("flip", "", "Обратить"),
-                    ui.row(ui.button(arm, "Взять руку"), ui.button(record, "Записать"), ui.button(play, "Проиграть"))),
+         ui.section("Запястье за датчиком", ui.label("Плату держите осью X к экрану, чипом вверх, и нажмите «Взять запястье»."),
+                    ui.row(ui.button(wrist, "Взять запястье"), ui.button(record, "Записать"), ui.button(play, "Проиграть"))),
          ui.chart("Углы", {"roll": "крен", "pitch": "тангаж", "yaw": "рыскание"}, unit="°", x=X),
          ui.chart("Ускорение", {"ax": "x", "ay": "y", "az": "z"}, unit="м/с²", x=X),
          ui.chart("Угловая скорость", {"gx": "x", "gy": "y", "gz": "z"}, unit="°/с", x=X),
