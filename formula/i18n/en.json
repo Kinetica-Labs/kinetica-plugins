@@ -53,5 +53,6 @@
   "стрелка": "arrow",
   "нет": "none",
   "Фигура": "Shape",
-  "Её id; 0 - выделенные": "Its id; 0 - the selected ones"
+  "Её id; 0 - выделенные": "Its id; 0 - the selected ones",
+  "формула - у фигуры: «{name}» не фигура": "a formula is a shape's: «{name}» is no shape"
 }

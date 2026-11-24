@@ -14,6 +14,8 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
+import time
 import xml.etree.ElementTree as ET
 
 from kinetica.plugin import command, component, draw, field, on_change, show, tr, ui
@@ -72,6 +74,61 @@ class Callout:
     end = field("точка", choices=tuple(_ENDS), label="Конец выноски", help="Точка - на детали, стрелка - на её контуре, нет - без знака")
     colour = field((1.0, 0.86, 0.3), **_COLOUR)
     outline = _EDGE
+
+
+# How a callout comes up, as a hand draws it, s - an explaining video's pace, slower than a button's 0.2-0.4 s (Material
+# Design): a ring pulses once from the point on the part, the line grows to the words, the reference line slides out, the
+# words come up - then it holds still: the eye goes to what starts moving, not to what keeps moving (motion onset captures
+# attention, Abrams and Christ 2003). The three newest stay bright, an older one fades as a newer one comes: working memory
+# holds about four things (Cowan 2001); words beside their part, when it is put (Mayer's spatial and temporal contiguity).
+PULSE, LINE, SHELF, WORDS_AT, WORDS, FADE, DIM, BRIGHT = 0.6, 0.4, 0.15, 0.45, 0.3, 0.6, 0.45, 3
+_born = {}   # a callout's drawing key -> when it first stood (time.monotonic())
+_calls = {}  # its key -> what draw.fill draws it with, to draw it again frame by frame
+_animating = {"thread": None}
+
+
+def _ease(t):
+    t = min(max(t, 0.0), 1.0)
+    return 1 - (1 - t) ** 3  # eased out: a hand slows where it stops
+
+
+def look(key, now):
+    """A callout's appearance now - its leader's grow, pulse and words, its opacity - and whether it still changes."""
+    t = now - _born[key]
+    grow = 0.75 * _ease(t / LINE) + 0.25 * _ease((t - LINE) / SHELF)
+    leader = {"grow": grow, "words": _ease((t - WORDS_AT) / WORDS), "pulse": t / PULSE if t < PULSE else None}
+    newer = sorted(b for k, b in _born.items() if k != key and (b, k) > (_born[key], key))
+    opacity, changing = 1.0, t < WORDS_AT + WORDS
+    if len(newer) >= BRIGHT:  # the third newer one came: this one fades to grey
+        since = now - newer[BRIGHT - 1]
+        opacity, changing = 1 - (1 - DIM) * _ease(since / FADE), changing or since < FADE
+    return leader, opacity, changing
+
+
+def _show(key, now):
+    outlines, kwargs = _calls[key]
+    leader, opacity, changing = look(key, now)
+    draw.fill(key, outlines, leader={**kwargs["leader"], **leader}, opacity=opacity, **{k: v for k, v in kwargs.items() if k != "leader"})
+    return changing
+
+
+def _animate():
+    """The callouts that still come up or fade, drawn again some 30 times a second until all hold still."""
+    try:
+        while True:
+            now = time.monotonic()
+            moving = [key for key in list(_calls) if key in _born and _show(key, now)]
+            if not moving:
+                break
+            time.sleep(1 / 30)
+    finally:
+        _animating["thread"] = None
+
+
+def _wake():
+    if _animating["thread"] is None:
+        _animating["thread"] = threading.Thread(target=_animate, daemon=True)
+        _animating["thread"].start()
 
 
 class Problem(Exception):
@@ -211,9 +268,12 @@ def redraw(scene):
             edge = EDGE if v["outline"] else {}
             if kind is Label:
                 draw.fill(key, outlines, object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"], **edge)
-            elif kind is Callout:
-                draw.fill(key, outlines, object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"],
-                          leader={"point": v["point"], "end": _ENDS.get(str(v["end"]), "dot")}, **edge)
+            elif kind is Callout:  # drawn as it comes up (look): the first time, and again only while it changes
+                _calls[key] = (outlines, dict(object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"],
+                                              leader={"point": v["point"], "end": _ENDS.get(str(v["end"]), "dot")}, **edge))
+                _born.setdefault(key, time.monotonic())
+                if _show(key, time.monotonic()):
+                    _wake()
             elif kind is World:
                 draw.fill(key, outlines, object=id, at=v["offset"], turn=v["turn"], scale=v["size"], colour=v["colour"], **edge)
             else:
@@ -221,6 +281,7 @@ def redraw(scene):
             keys.add(key)
     for gone in _drawn - keys:
         draw.clear(gone)
+        _calls.pop(gone, None), _born.pop(gone, None)
     _drawn.clear()
     _drawn.update(keys)
     for words in problems:
@@ -231,6 +292,8 @@ def redraw(scene):
 def _put(scene, kind, latex, target=0):
     """The component on the shape `target` (an id; 0: every selected one); with none, on a small hidden shape of its own."""
     shapes = [scene.objects[int(target)]] if target else [o for o in scene.editor.selection if o.kind == "entity"]
+    if any(o.kind != "entity" for o in shapes):  # a battery, a joint: no place in space to point at or hang from
+        raise ValueError(tr("формула - у фигуры: «{name}» не фигура").format(name=next(o.name for o in shapes if o.kind != "entity")))
     if not shapes:
         holder = scene.add("box", name=f"{kind._kinetica['label']} {1 + sum(1 for _ in kind.instances(scene))}", position=(0.0, 1.0, 0.0),
                            size=(0.05, 0.05, 0.05))
@@ -239,13 +302,17 @@ def _put(scene, kind, latex, target=0):
     type = f"formula.{kind._kinetica['name']}"
     for shape in shapes:
         values = {"latex": latex}
-        if kind is Callout and shape.visible:  # aside and above the shape, the leader to the middle of its top
-            values["offset"] = [shape.size[0] / 2 + 0.4, shape.size[1] / 2 + 0.35, 0.0]
+        if kind is Callout and shape.visible:  # aside and above the shape, the leader to the middle of its top - each next
+            # callout on the other side, then a row higher, so that two never lie on each other (a drawing's notes alternate)
+            n = sum(1 for _ in Callout.instances(scene))
+            side, row = (1 if n % 2 == 0 else -1), (n // 2) % 2
+            values["offset"] = [side * (shape.size[0] / 2 + 0.45), shape.size[1] / 2 + 0.3 + 0.35 * row, 0.0]
             values["point"] = [0.0, shape.size[1] / 2, 0.0]
         elif kind is not Screen and shape.visible:  # over the shape, or on its top
             values["offset"] = [0.0, shape.size[1] / 2 + (0.25 if kind is Label else 0.02), 0.0]
         scene.ed.component_set(id=shape.id, type=type, values=values)
-    scene.editor.select(*shapes)
+    if not target:  # a button's: the shapes it labelled, selected; a call naming its shape (an agent's) leaves the selection be
+        scene.editor.select(*shapes)
     typeset(latex)  # a source LaTeX refuses is said now, with the command's answer
     return {"ids": [shape.id for shape in shapes]}
 
