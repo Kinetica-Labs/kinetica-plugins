@@ -20,6 +20,7 @@ import textwrap
 import threading
 import time
 
+from kinetica.client import OperationError
 from kinetica.plugin import command, draw, field, tr
 
 WIDE, TYPE = 52, 45.0        # letters a line; letters a second - quick enough to keep up, slow enough to be read as typed
@@ -87,10 +88,14 @@ def _show(now):
         draw.label("card", (0, 0, 0), card["text"], title=card["title"], colour=WORDS, stroke=LIGHT, size=SIZE, space="screen",
                    place=card["place"], background=GLASS, opacity=card["opacity"])
     for part, strength in lights.items():
-        if strength > 0:
-            draw.glow(f"part/{part}", part, strength, colour=LIGHT)
-        else:
-            draw.clear(f"part/{part}")
+        try:
+            if strength > 0:
+                draw.glow(f"part/{part}", part, strength, colour=LIGHT)
+            else:
+                draw.clear(f"part/{part}")
+        except OperationError:  # the part was deleted while it shone: its light goes with it
+            with _lock:
+                _lit.pop(part, None)
     return moving
 
 
