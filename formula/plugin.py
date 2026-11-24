@@ -69,8 +69,10 @@ class Callout:
     """LaTeX в стороне от фигуры и линия-выноска к её точке, как на чертеже (ГОСТ 2.316, ISO 128-22): надпись на полке,
     от ближнего к детали конца полки - линия к точке; точку тянут оранжевой ручкой прямо по детали."""
     latex = _LATEX
-    size = field(4.0, unit="% вида", range=(0.5, 50.0), label="Размер", help="Высота буквы в долях высоты вида")
-    offset = field((0.6, 0.5, 0.0), unit="м", label="Где надпись", help="От фигуры по осям мира: надпись в стороне, выноска - к детали")
+    size = field(6.0, unit="% вида", range=(0.5, 50.0), label="Размер", help="Высота буквы в долях высоты вида: крупно - видео смотрят с телефона")
+    arrange = field("сама", choices=("сама", "вручную"), label="Раскладка",
+                    help="Сама - в колонки слева и справа от деталей, по порядку их точек: выноски не пересекаются при любом виде; вручную - по «Где надпись»")
+    offset = field((0.6, 0.5, 0.0), unit="м", label="Где надпись", help="Раскладка вручную: от фигуры по осям мира")
     point = field((0.0, 0.0, 0.0), unit="м", handle="point", label="Точка на детали",
                   help="В осях фигуры: сюда показывает выноска; тяните оранжевую точку по детали")
     end = field("точка", choices=tuple(_ENDS), label="Конец выноски", help="Точка - на детали, стрелка - на её контуре, нет - без знака")
@@ -297,7 +299,8 @@ def redraw(scene):
                 draw.fill(key, outlines, object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"], **edge)
             elif kind is Callout:  # drawn as it comes up (look): the first time, and again only while it changes
                 _calls[key] = (outlines, dict(object=id, at=v["offset"], space="label", scale=v["size"] / 100, colour=v["colour"],
-                                              leader={"point": v["point"], "end": _ENDS.get(str(v["end"]), "dot")}, **edge))
+                                              leader={"point": v["point"], "end": _ENDS.get(str(v["end"]), "dot"),
+                                                      "place": "here" if v.get("arrange") == "вручную" else "aside"}, **edge))
                 _born.setdefault(key, time.monotonic())
                 if _show(key, time.monotonic()):
                     _wake()
