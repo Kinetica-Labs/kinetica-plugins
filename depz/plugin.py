@@ -31,7 +31,6 @@ _lock = threading.Lock()
 _imu = {"board": None, "port": "", "device": "", "streams": {}}
 _lead = {}  # what the board leads, by clutch: "wrist", "arm" - joints, rest, the board's axes, zero, angles (none: nothing)
 _grip = {}  # the hand's fingers: (joint, open, closed) each, and the panel whose Space closes them
-SIGN = 1.0  # a joint's coordinate grows as body a turns about the axis this way round
 _playing = {"stop": threading.Event()}
 
 
@@ -279,7 +278,7 @@ def lead(scene, dt, sensors):
             g["angles"] = [b + a for b, a in zip(g["base"], g["split"])]
         else:
             g["zero"] = None
-        g["shown"] = hand.smooth(g["shown"], [r + SIGN * a for r, a in zip(g["rest"], g["angles"])], dt)
+        g["shown"] = hand.smooth(g["shown"], [r + a for r, a in zip(g["rest"], g["angles"])], dt)
         out.update({j: {"target": round(v, 5)} for j, v in zip(g["joints"], g["shown"])})
     closed = _held(sensors, "grip", _grip.get("clutch"))  # Space: pressed - the fingers close to their limit (they stop on what they hold)
     out.update({j: {"target": shut if closed else open_} for j, open_, shut in _grip.get("fingers", ())})
