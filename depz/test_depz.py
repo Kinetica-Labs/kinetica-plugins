@@ -6,6 +6,7 @@ import struct
 import unittest
 
 import bno086
+import hand
 
 
 class ProtocolTests(unittest.TestCase):
@@ -49,6 +50,43 @@ class ProtocolTests(unittest.TestCase):
         for q, want in (((s, 0, 0, s), (0, 0, 90)), ((s, s, 0, 0), (90, 0, 0)), ((math.sqrt(0.75), 0, 0.5, 0), (0, 60, 0))):
             for got, w in zip(map(math.degrees, bno086.euler(q)), want):
                 self.assertAlmostEqual(got, w, places=6)
+
+
+class HandTests(unittest.TestCase):
+    """The board as the arm's puppet strings (hand.py): its turn from the zero pose to the joints' targets."""
+
+    @staticmethod
+    def about(axis, radians):
+        half = radians / 2
+        return (math.cos(half), *[v * math.sin(half) for v in axis])
+
+    def test_the_zero_pose_leaves_the_arm_where_it_stood(self):
+        q = (0.9, 0.1, -0.3, 0.3)
+        n = math.sqrt(sum(v * v for v in q))
+        q = tuple(v / n for v in q)
+        rest = [0.1, -0.2, 0.3, 0.0, 0.0, 0.5]
+        self.assertEqual([round(v, 9) for v in hand.targets(hand.angles(hand.relative(q, q)), rest)], rest)
+
+    def test_each_angle_leads_its_joints(self):
+        zero, rest = (1.0, 0.0, 0.0, 0.0), [0.0] * 6
+        yaw = hand.targets(hand.angles(hand.relative(self.about((0, 0, 1), 0.5), zero)), rest)
+        self.assertAlmostEqual(yaw[0], 0.5)
+        self.assertEqual(yaw[1:], [0.0] * 5)
+        pitch = hand.targets(hand.angles(self.about((0, 1, 0), 0.3)), rest)
+        self.assertAlmostEqual(pitch[1], 0.3)
+        self.assertAlmostEqual(pitch[2], -0.18)  # the elbow bent back by 0.6 of it
+        roll = hand.targets(hand.angles(self.about((1, 0, 0), -0.7)), rest, flip=("roll",))
+        self.assertAlmostEqual(roll[5], 0.7)     # reversed
+        self.assertEqual(len(hand.targets(hand.angles(self.about((1, 0, 0), 1.0)), [0.0] * 3)), 3)  # no wrist: skipped
+
+    def test_led_no_further_than_the_limit_and_smoothly(self):
+        far = hand.targets({"yaw": 9.0, "pitch": 0.0, "roll": 0.0}, [0.2] * 6)
+        self.assertAlmostEqual(far[0], 0.2 + hand.LIMIT)
+        shown = [0.0]
+        for _ in range(60):  # a second of frames
+            shown = hand.smooth(shown, [1.0], 1 / 60)
+        self.assertGreater(shown[0], 0.99)
+        self.assertLess(hand.smooth([0.0], [1.0], 1 / 60)[0], 0.25)  # no jump in one frame
 
 
 if __name__ == "__main__":
