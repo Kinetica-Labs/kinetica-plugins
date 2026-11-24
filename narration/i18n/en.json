@@ -4,10 +4,12 @@
   "Что сейчас строю": "What I am building now",
   "Одна короткая фраза для зрителя: что и зачем": "One short sentence for the viewer: what and why",
   "Деталь": "Part",
-  "Номер объекта, о котором строка: он светится, пока строка последняя (0 - никакой)": "The object the line is about: it glows while the line is the newest (0 - none)",
   "Убрать рассказ": "Clear the narration",
   "Камера ведёт": "The camera directs",
   "Вести камеру": "Direct the camera",
   "Строка о детали подводит к ней камеру и облетает её; щелчок в виде отдаёт камеру вам": "A line about a part brings the camera to it and circles it; a click in the view gives the camera back to you",
-  "Свет для съёмки": "Light for filming"
+  "Свет для съёмки": "Light for filming",
+  "Шаг": "Step",
+  "Одно-два слова над фразой: что за шаг (Основание, Плечо)": "One or two words over the sentence: what the step is (Base, Shoulder)",
+  "Номер объекта, о котором карточка: он светится, пока карточка последняя (0 - никакой)": "The object the card is about: it glows while the card is the newest (0 - none)"
 }

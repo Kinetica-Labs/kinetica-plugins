@@ -1,15 +1,16 @@
 """narration - «Рассказ»: what an agent is building, written in the view as it builds it.
 
-`narration_say {text, target}` puts a line at the bottom of the view, typed letter by letter on a dark plate as
-subtitles are (WebVTT's cue box): the last phrases stay whole, as many as four lines hold, older ones go up and out. `target` - the part the line
-is about: it lights up (a halo round its silhouette, draw.glow) and stays lit, softer, while the line is the newest;
-the next line's part takes the light over. An agent filmed while it builds says before each step what it does - the
-viewer reads the plan, sees the part, then the formula (the «Формулы» plugin's callouts). `narration_clear` takes it
-all off. Drawings, not scene edits: no undo, nothing saved.
+`narration_say {text, title, target}` shows a card at the bottom left of the view, as motion design's lower thirds are:
+a dark glass card with a thin light edge and an accent bar, over the words a small capitals label «ШАГ 3 · ПЛЕЧО»; it
+slides in from the left eased out (0.35 s), the words typed letter by letter, the card before it gone - one card at a
+time, what is happening now. `target` - the part the card is about: it lights up in the card's accent (a halo round its
+silhouette, draw.glow) and stays lit, softer, while the card is the newest; the next card's part takes the light over.
+An agent filmed while it builds says before each step what it does - the viewer reads the step, sees the part, then the
+formula (the «Формулы» plugin's callouts). `narration_clear` takes it all off. Drawings, not scene edits: no undo.
 
-The camera directs itself, as a film of a thing being made is shot: each line with a part flies the view to it - eased,
+The camera directs itself, as a film of a thing being made is shot: each card with a part flies the view to it - eased,
 1.6 s, a three-quarter view from a little above, each shot from a new side - and then circles it slowly, a turntable
-(view_look glide and orbit: the editor moves the camera, one call a shot); a line about nothing pulls back to the whole.
+(view_look glide and orbit: the editor moves the camera, one call a shot); a card about nothing pulls back to the whole.
 While the scene runs the view is the run's (a chase camera follows a car); a press in the view gives it to the person.
 `narration_camera {on}` switches the directing off and on. «Свет для съёмки» (`narration_stage`) lights the scene as a
 studio does: a warm key and a cool rim from behind, both with shadows, a faint fill, the floor dark.
@@ -19,17 +20,17 @@ import textwrap
 import threading
 import time
 
-from kinetica.plugin import command, draw, field, on_play, on_stop
+from kinetica.plugin import command, draw, field, on_play, on_stop, tr
 
-PHRASES, MOST, WIDE = 3, 4, 58  # phrases kept, lines shown at most (whole phrases, the newest always), letters a line
-TYPE = 45.0                  # letters a second: quick enough to keep up, slow enough to be read as typed
+WIDE, TYPE = 52, 45.0        # letters a line; letters a second - quick enough to keep up, slow enough to be read as typed
+SLIDE, IN, WORDS_AT = 0.35, 0.03, 0.2  # the card slides in over SLIDE s from IN of the view's width to the left; words from WORDS_AT s
 RISE, SETTLE, HOLD, FADE = 0.25, 0.9, 0.55, 0.5  # the part's light: up in RISE s, down to HOLD by SETTLE s; out in FADE s
-WORDS, PLATE, LIGHT = (0.93, 0.95, 1.0), (0.04, 0.06, 0.09, 0.74), (0.35, 0.8, 1.0)
-PLACE, SIZE = (0.025, 0.955), 19
+WORDS, GLASS, LIGHT = (0.94, 0.96, 1.0), (0.05, 0.07, 0.1, 0.68), (0.35, 0.8, 1.0)  # the light: the card's accent and the part's
+PLACE, SIZE = (0.03, 0.95), 19
 
 GLIDE, ORBIT, LIFT, TURN = 1.6, 6.0, 22.0, 35.0  # a shot: s to fly, °/s to circle, ° from above, ° to the next side
 
-_said = []                   # [(phrase, born)]: what was said, the newest last
+_card = {}                   # the card now: text, title, step, born
 _camera = {"on": True, "playing": False, "shot": 0, "last": None}
 _lit = {}                    # part -> (lit at, put out at or None)
 _lock = threading.Lock()
@@ -48,26 +49,26 @@ def light(since, out=None, now=None):
 
 
 def frame(now):
-    """The plate's text now and whether anything still moves - typing, a light rising or going out."""
+    """The card now - its words as typed so far, its label, where it has slid, how much it shows - the parts' lights, and
+    whether anything still moves."""
     with _lock:
-        blocks, moving = [], False
-        for k, (phrase, born) in enumerate(_said):
-            wrapped = textwrap.wrap(phrase, WIDE)
-            if k == len(_said) - 1:  # the newest, typed letter by letter across its lines
-                left, typed = max(int((now - born) * TYPE), 0), []
-                for line in wrapped:
-                    if left <= 0:
-                        break
-                    typed.append(line[:left])
-                    left -= len(line)
-                if sum(map(len, typed)) < sum(map(len, wrapped)):
-                    typed = (typed or [""])[:-1] + [(typed or [""])[-1] + "▍"]
-                    moving = True
-                wrapped = typed
-            blocks.append(wrapped)
-        lines = blocks.pop() if blocks else []
-        while blocks and len(lines) + len(blocks[-1]) <= MOST:  # whole phrases above it, as many as fit
-            lines = blocks.pop() + lines
+        card, moving = None, False
+        if _card:
+            t = now - _card["born"]
+            wrapped = textwrap.wrap(_card["text"], WIDE)
+            left, typed = max(int((t - WORDS_AT) * TYPE), 0), []
+            for line in wrapped:
+                if left <= 0:
+                    break
+                typed.append(line[:left])
+                left -= len(line)
+            typing = sum(map(len, typed)) < sum(map(len, wrapped))
+            if typing:
+                typed = (typed or [""])[:-1] + [(typed or [""])[-1] + "▍"]
+            slid = _ease(t / SLIDE)
+            label = f"{tr('Шаг')} {_card['step']}" + (f" · {_card['title']}" if _card["title"] else "")
+            card = {"text": "\n".join(typed) or "▍", "title": label, "place": (PLACE[0] - IN * (1 - slid), PLACE[1]), "opacity": slid}
+            moving = typing or t < SLIDE
         lights = {}
         for part, (lit, out) in list(_lit.items()):
             since, gone = now - lit, None if out is None else now - out
@@ -77,13 +78,14 @@ def frame(now):
                 continue
             lights[part] = light(since, gone)
             moving = moving or since < SETTLE or gone is not None
-        return "\n".join(lines), lights, moving
+        return card, lights, moving
 
 
 def _show(now):
-    text, lights, moving = frame(now)
-    if text:
-        draw.label("lines", (0, 0, 0), text, colour=WORDS, size=SIZE, space="screen", place=PLACE, background=PLATE)
+    card, lights, moving = frame(now)
+    if card:
+        draw.label("card", (0, 0, 0), card["text"], title=card["title"], colour=WORDS, stroke=LIGHT, size=SIZE, space="screen",
+                   place=card["place"], background=GLASS, opacity=card["opacity"])
     for part, strength in lights.items():
         if strength > 0:
             draw.glow(f"part/{part}", part, strength, colour=LIGHT)
@@ -155,23 +157,24 @@ def _stopped(scene):
 
 @command(label="Сказать")
 def say(scene, text: str = field("", label="Что сейчас строю", help="Одна короткая фраза для зрителя: что и зачем"),
-        target: int = field(0, label="Деталь", help="Номер объекта, о котором строка: он светится, пока строка последняя (0 - никакой)")):
-    """A line at the bottom of the view, typed letter by letter; the part it is about lights up."""
-    text = " ".join(str(text).split())
+        title: str = field("", label="Шаг", help="Одно-два слова над фразой: что за шаг (Основание, Плечо)"),
+        target: int = field(0, label="Деталь", help="Номер объекта, о котором карточка: он светится, пока карточка последняя (0 - никакой)")):
+    """A card at the bottom left of the view - the step's label, the words typed; the part it is about lights up."""
+    text, title = " ".join(str(text).split()), " ".join(str(title).split())
     if not text:
         return {"said": False, "why": "text: пустая строка - нечего сказать"}
     with _lock:
-        _said.append((text, time.monotonic()))
-        del _said[:-PHRASES]
+        if _card.get("text") != text or _card.get("title") != title:  # said again at once: the same card
+            _card.update(text=text, title=title, step=_card.get("step", 0) + 1, born=time.monotonic())
         for part, (lit, out) in list(_lit.items()):
-            if out is None:
+            if out is None and part != int(target):
                 _lit[part] = (lit, time.monotonic())
-        if target:
+        if target and (int(target) not in _lit or _lit[int(target)][1] is not None):
             _lit[int(target)] = (time.monotonic(), None)
     _wake()
     if scene is not None:
         direct(scene, int(target))
-    return {"said": True, "lines": len(_said)}
+    return {"said": True, "step": _card["step"]}
 
 
 @command(label="Камера ведёт")
@@ -201,9 +204,9 @@ def stage(scene):
 
 @command(label="Убрать рассказ")
 def clear(scene):
-    """The plate and every light off."""
+    """The card and every light off; the steps counted from one again."""
     with _lock:
-        _said.clear()
+        _card.clear()
         _lit.clear()
     draw.clear()
     return {"cleared": True}

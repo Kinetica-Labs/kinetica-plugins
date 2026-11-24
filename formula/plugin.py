@@ -20,7 +20,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 
-from kinetica.plugin import command, component, draw, field, on_change, show, tr, ui
+from kinetica.plugin import command, component, draw, field, on_change, on_stop, show, tr, ui
 
 _LATEX = field("F = ma", label="LaTeX", help="Формула, как между $ и $: T = 2\\pi\\sqrt{\\frac{L}{g}}")
 _COLOUR = dict(range=(0.0, 1.0), label="Цвет: красный, зелёный, синий")
@@ -280,6 +280,12 @@ def _outlines(svg):
 
 
 _drawn = set()  # the keys of the pictures on the view
+
+
+@on_stop
+def _after_run(scene):
+    """Stop takes off what was drawn while the scene ran - a formula typeset late, after ▶, among it: all drawn again."""
+    redraw(scene)
 
 
 @on_change
