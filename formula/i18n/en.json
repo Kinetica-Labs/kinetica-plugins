@@ -54,5 +54,6 @@
   "нет": "none",
   "Фигура": "Shape",
   "Её id; 0 - выделенные": "Its id; 0 - the selected ones",
-  "формула - у фигуры: «{name}» не фигура": "a formula is a shape's: «{name}» is no shape"
+  "формула - у фигуры: «{name}» не фигура": "a formula is a shape's: «{name}» is no shape",
+  "встроенный набор формул не понял «{latex}»: {why}": "the built-in typesetter could not read «{latex}»: {why}"
 }

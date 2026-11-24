@@ -7,12 +7,14 @@ labels a part (ГОСТ 2.316, ISO 128-22) - what an agent explaining what it bu
 компонент» in the inspector), then type LaTeX in the component's card: the formula is typeset anew on Enter. With
 nothing selected a button makes the formula a small hidden shape of its own, «Формула N»: click the formula to select it.
 
-The source is typeset by the system's own `latex` and `dvisvgm` (TeX Live, MiKTeX) into filled outlines; the editor
-paints them (draw.fill). Nothing but Python's standard library is used.
+The source is typeset by the system's own `latex` and `dvisvgm` (TeX Live, MiKTeX) into filled outlines when the computer
+has them, else by the built-in ziamath (third_party/: pure-Python submodules, MIT, with the STIX Two Math font, SIL OFL) -
+nothing to install; the editor paints them (draw.fill). No other package is used than those and the standard library.
 """
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -135,15 +137,40 @@ class Problem(Exception):
     """Why a source was not typeset, in words for the person who typed it."""
 
 
+class Missing(Problem):
+    """latex or dvisvgm is not on this computer: the built-in typesetter sets the formula instead."""
+
+
 _typeset = {}  # source -> its outlines: typesetting takes a third of a second
 
 
 def typeset(latex):
     """LaTeX mathematics, as between $ and $, into outlines for draw.fill: rows "M x y L x y C x1 y1 x2 y2 x y Z" in ems,
-    x right and y up, the formula's centre at 0 0. Raises Problem: a program is missing, or LaTeX's own complaint."""
+    x right and y up, the formula's centre at 0 0 - by the computer's LaTeX when it has one, else by the built-in
+    typesetter (ziamath): nothing to install. Raises Problem: the source's own fault, in words."""
     if latex not in _typeset:
-        _typeset[latex] = _outlines(_svg(latex))
+        try:
+            svg = _svg(latex)
+        except Missing:
+            svg = _builtin(latex)
+        _typeset[latex] = _outlines(svg)
     return _typeset[latex]
+
+
+def _builtin(latex):
+    """The formula's SVG by ziamath - three pure-Python submodules of third_party/ (ziamath, ziafont, latex2mathml; MIT) and
+    the STIX Two Math font (SIL OFL), each pinned to its release - drawn with paths and rectangles alone, as dvisvgm draws
+    them: one converter (_outlines) reads both. 10 units an em, as LaTeX's 10 pt type."""
+    if "ziamath" not in sys.modules:
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party")
+        sys.path[:0] = [os.path.join(folder, repo) for repo in ("ziamath", "ziafont", "latex2mathml")]
+        sys.path.append(folder)  # latex2mathml asks for its version: the dist-info beside the submodule says it
+    import ziamath
+    ziamath.config.svg2 = False  # each glyph its own path, no <use> of <symbol>s
+    try:
+        return ziamath.Latex(latex, size=10).svg()
+    except Exception as error:  # noqa: BLE001 - the parser's words for a source it cannot read
+        raise Problem(tr("встроенный набор формул не понял «{latex}»: {why}").format(latex=latex, why=error)) from None
 
 
 def _svg(latex):
@@ -158,7 +185,7 @@ def _svg(latex):
             subprocess.run(["latex", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", "f.tex"], cwd=folder,
                            capture_output=True, timeout=60, **quiet)
         except FileNotFoundError:
-            raise Problem("LaTeX " + missing) from None
+            raise Missing("LaTeX " + missing) from None
         if not os.path.exists(os.path.join(folder, "f.dvi")):
             with open(os.path.join(folder, "f.log"), encoding="utf-8", errors="replace") as log:
                 said = next((line[2:].strip() for line in log if line.startswith("!")), tr("страница не получилась"))
@@ -169,7 +196,7 @@ def _svg(latex):
             with open(os.path.join(folder, "f.svg"), encoding="utf-8") as svg:
                 return svg.read()
         except FileNotFoundError:
-            raise Problem("dvisvgm " + missing) from None
+            raise Missing("dvisvgm " + missing) from None
 
 
 def _path(data, dx, dy):
