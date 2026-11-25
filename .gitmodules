@@ -1,0 +1,12 @@
+[submodule "formula/third_party/ziamath"]
+	path = formula/third_party/ziamath
+	url = https://codeberg.org/cdelker/ziamath.git
+	shallow = true
+[submodule "formula/third_party/ziafont"]
+	path = formula/third_party/ziafont
+	url = https://codeberg.org/cdelker/ziafont.git
+	shallow = true
+[submodule "formula/third_party/latex2mathml"]
+	path = formula/third_party/latex2mathml
+	url = https://github.com/roniemartinez/latex2mathml.git
+	shallow = true

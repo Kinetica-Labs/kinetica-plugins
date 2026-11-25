@@ -1,0 +1,17 @@
+{
+  "Моторы": "Motors",
+  "Мотор по устройству": "Motor by its make",
+  "Сустав": "Joint",
+  "Поле в зазоре": "Gap field",
+  "Длина ротора": "Rotor length",
+  "Радиус ротора": "Rotor radius",
+  "Витков": "Turns",
+  "Провод": "Wire",
+  "Параллельных ветвей": "Parallel paths",
+  "Доля под полюсом": "Share under a pole",
+  "Передача": "Gear ratio",
+  "Напряжение": "Voltage",
+  "K = {k:.4f} Н·м/А, R = {r:.4f} Ом": "K = {k:.4f} N·m/A, R = {r:.4f} Ω",
+  "{p}: {q} %": "{p}: {q} %",
+  "P = U·I = {v} В × {i} А = {w} Вт": "P = U·I = {v} V × {i} A = {w} W"
+}

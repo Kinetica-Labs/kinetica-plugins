@@ -1,0 +1,10 @@
+{
+  "Собрать сцену": "Build the scene",
+  "Сцена-витрина: рука над шахматной доской, маятник у башни, свет, камера по ключам, формулы. Потом ▶ - и история играет сама.": "The showcase scene: an arm over a chessboard, a pendulum by the rook, lights, a keyframed camera, formulas. Then ▶ - and the story plays by itself.",
+  "сцена собрана: ▶ играет историю": "scene built: ▶ plays the story",
+  "; без плагинов {missing} - без текстур и формул": "; without plugins {missing} - no textures and formulas",
+  "Витрина": "Showcase",
+  "Одна сцена, в которой занято всё: рука и схват, суставы и твёрдые тела, сила, свет с тенями, камера по ключам, формулы и текстуры.": "One scene that uses everything: arm and grasp, joints and rigid bodies, force, lights with shadows, a keyframed camera, formulas and textures.",
+  "Потом ▶: история играет сама, вид - через «Камеру фильма».": "Then ▶: the story plays by itself, the view is through the «Камера фильма».",
+  "Состояние": "State"
+}
